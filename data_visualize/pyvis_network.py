@@ -7,6 +7,7 @@ from pyvis.network import Network
 from config import csv_files, PROCESSED_DIR, PYVIS_NETWORK_OUTPUT
 
 
+# FIXME #1 - change folder structure to match ver2
 def create_pyvis_network():
     """
     Creates a network visualization using PyVis.
@@ -72,4 +73,5 @@ def create_pyvis_network():
                             net.add_edge(source_id, target_id)
 
     net.show(PYVIS_NETWORK_OUTPUT, notebook=False)
+    # TODO #2 Display proper information and stats about the network
     print("PyVis network saved as:", PYVIS_NETWORK_OUTPUT)

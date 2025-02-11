@@ -11,6 +11,7 @@ TARGET_CRS = "EPSG:2154"
 FOLIUM_MAP_OUTPUT = PROCESSED_DIR + "/folium_map.html"
 PYVIS_NETWORK_OUTPUT = PROCESSED_DIR + "/pyvis_network.html"
 
+# TODO #3 Refactor to use a single configuration file for both scripts
 csv_files = {
     "postes_source": {
         "file_path": "poste-source.csv",
@@ -82,7 +83,6 @@ csv_files = {
         "connection_radius": 1,
         "order": 5,
     },
-    # "reseau_hta": { ... }  # (commented out)
     "reseau_souterrain_hta": {
         "file_path": "reseau-souterrain-hta.csv",
         "color": "purple",
