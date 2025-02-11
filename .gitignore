@@ -172,5 +172,5 @@ cython_debug/
 
 
 # data and output contents except for example.txt
-data/*
-output/*
+data*/*
+output*/*
