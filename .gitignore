@@ -172,8 +172,5 @@ cython_debug/
 
 
 # data and output contents except for example.txt
-data/*.csv
-output*/*/*.geojson
-*html
-data_processed*
-data*
+data/*
+output/*
