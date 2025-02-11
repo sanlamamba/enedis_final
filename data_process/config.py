@@ -4,7 +4,7 @@ import os
 # CONFIGURATION
 # =============================================================================
 
-DATA_DIR = "../data3"
+DATA_DIR = "../data/montreuil"
 PROCESSED_DIR = "../output"
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 

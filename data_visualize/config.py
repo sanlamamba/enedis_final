@@ -5,7 +5,7 @@
 # CONFIGURATION
 # =============================================================================
 
-PROCESSED_DIR = "../output"
+PROCESSED_DIR = "../output_con"
 TARGET_CRS = "EPSG:2154"
 
 FOLIUM_MAP_OUTPUT = PROCESSED_DIR + "/folium_map.html"
