@@ -6,10 +6,10 @@ import pandas as pd
 from loader import load_geojson_files
 from connections import find_connections
 from saver import save_updated_layers
-from config import csv_files
+from config import csv_files, CONNECTION_RADIUS
 
 
-def main():
+def main() -> None:
     start_time = time.time()
     logging.info("Loading GeoJSON files into memory...")
     all_layers = load_geojson_files()
@@ -26,7 +26,7 @@ def main():
         exclude_list = csv_files[layer].get("exclude_connections", [])
         priority_connections = csv_files[layer].get("priority_connections", None)
         mono_connection = csv_files[layer].get("mono_connection_per_endpoint", False)
-        radius = csv_files[layer].get("radius", 10)
+        radius = csv_files[layer].get("radius", CONNECTION_RADIUS["mid"])
         updated_gdf = find_connections(
             gdf,
             all_features,

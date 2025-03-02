@@ -10,7 +10,7 @@ def create_directory(directory: str) -> None:
     os.makedirs(directory, exist_ok=True)
 
 
-def load_geojson_files():
+def load_geojson_files() -> dict:
     """
     Load all GeoJSON files into a dictionary of GeoDataFrames.
     Each GeoDataFrame is given a 'source_layer' column based on the key.
