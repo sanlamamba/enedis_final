@@ -1,8 +1,7 @@
 import os
 import json
 from pyproj import Transformer
-
-from utils import get_coordinates
+from utils import get_coordinates, convert_coordinates
 
 manual_output_path = "../output/data.geojson"
 
@@ -116,3 +115,4 @@ def process_features(geojson_dict, transformer):
         if geom_dict:
             feature["geometry"]["coordinates"] = get_coordinates(geom_dict, transformer)
             feature["properties"].pop("geo_shape", None)
+            feature["properties"]["coordinates"] = convert_coordinates(geom_dict)
