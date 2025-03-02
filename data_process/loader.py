@@ -8,7 +8,7 @@ from config import DATA_DIR, TARGET_CRS
 
 
 # TODO Refactor #1: DOcument better the function
-def load_csv_to_gdf(layer_key, config):
+def load_csv_to_gdf(layer_key: str, config: dict) -> gpd.GeoDataFrame:
     """
     Load a CSV file and convert its "geo_shape" column (a JSON string)
     into a Shapely geometry. Reprojects from EPSG:4326 to TARGET_CRS.
