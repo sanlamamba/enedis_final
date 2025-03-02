@@ -20,7 +20,7 @@ def main():
         layers[layer_key] = {"gdf": gdf, "tree": tree}
 
     # =============================================================================
-    # SAVE THE RESULTS WITH DUAL COORDINATES
+    # SAVE THE RESULTS WITH THE COORDINATES AND PROPERTIES
     # =============================================================================
     print("Saving updated layers as GeoJSON files...")
     save_layers(layers, TARGET_CRS)
