@@ -5,7 +5,7 @@
 # CONFIGURATION
 # =============================================================================
 
-PROCESSED_DIR = "../output_con"
+PROCESSED_DIR = "../output"
 TARGET_CRS = "EPSG:2154"
 
 FOLIUM_MAP_OUTPUT = PROCESSED_DIR + "/folium_map.html"
@@ -43,7 +43,7 @@ csv_files = {
     },
     "position_geographique": {
         "file_path": "position-geographique-des-poteaux-hta-et-bt.csv",
-        "color": "green",
+        "color": "orange",
         "layer_name": "Poteaux",
         "exclude_connections": [
             "postes_source",

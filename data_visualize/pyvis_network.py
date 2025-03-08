@@ -19,11 +19,14 @@ def create_pyvis_network():
     time_start = time.time()
 
     net = Network(
-        height="750px",
+        height="1024px",
         width="100%",
-        bgcolor="#222222",
-        font_color="white",
+        bgcolor="#FFFFFF",
+        font_color="black",
         notebook=False,
+        directed=False,
+        # filter_menu=True,
+        # select_menu=True,
     )
     nodes = {}
 

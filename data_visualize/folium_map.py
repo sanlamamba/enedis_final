@@ -1,5 +1,3 @@
-# folium_map.py
-
 import os
 import json
 import folium
@@ -9,7 +7,46 @@ import time
 from config import csv_files, PROCESSED_DIR, FOLIUM_MAP_OUTPUT
 
 
-# TODO #4 Refactor Write proper docstrings for the function
+def add_legend(map_obj):
+    """
+    Generates a legend based on the configuration in csv_files and injects it
+    into the provided folium map object.
+    """
+    sorted_configs = sorted(csv_files.items(), key=lambda x: x[1].get("order", 999))
+    legend_html = """
+    <div style="
+        position: fixed;
+        bottom: 50px; left: 50px;
+        width: 220px; 
+        background-color: rgba(255, 255, 255, 0.8);
+        border: 2px solid grey;
+        z-index:9999;
+        font-size: 14px;
+        line-height: 18px;
+        padding: 10px;
+        box-shadow: 2px 2px 6px rgba(0,0,0,0.3);
+    ">
+        <div style="text-align: center; font-weight: bold; margin-bottom: 8px;">Legend</div>
+    """
+    for key, cfg in sorted_configs:
+        legend_html += f"""
+        <div style="margin-bottom: 4px;">
+            <span style="
+                background: {cfg['color']}; 
+                display: inline-block; 
+                width: 12px; 
+                height: 12px; 
+                margin-right: 6px;
+                border: 1px solid #555;
+            "></span>
+            {cfg['layer_name']}
+        </div>
+        """
+    legend_html += "</div>"
+    map_obj.get_root().html.add_child(folium.Element(legend_html))
+    return map_obj
+
+
 def create_folium_map():
     """
     Loads each processed GeoJSON file from the new folder structure:
@@ -97,6 +134,9 @@ def create_folium_map():
         m.add_child(fg)
 
     folium.LayerControl(collapsed=False).add_to(m)
+
+    add_legend(m)
+
     m.save(FOLIUM_MAP_OUTPUT)
     time_end = time.time()
     print("Folium map saved as:", FOLIUM_MAP_OUTPUT)
