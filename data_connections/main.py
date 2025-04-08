@@ -9,24 +9,44 @@ from saver import save_updated_layers
 from config import csv_files, CONNECTION_RADIUS
 
 
-def main() -> None:
-    start_time = time.time()
+def load_all_layers():
+    """
+    Load all GeoJSON files as GeoDataFrames and create a combined GeoDataFrame.
+
+    Returns:
+        tuple: A dictionary of GeoDataFrames (keyed by layer name) and a combined GeoDataFrame.
+    """
     logging.info("Loading GeoJSON files into memory...")
     all_layers = load_geojson_files()
-    print(f"Count of all_layers: {len(all_layers)}")
-
+    logging.info(f"Loaded {len(all_layers)} layers.")
     all_features = gpd.GeoDataFrame(
         pd.concat(all_layers.values(), ignore_index=True), crs="EPSG:4326"
     )
+    return all_layers, all_features
 
+
+def compute_connections_for_layers(
+    all_layers: dict, all_features: gpd.GeoDataFrame
+) -> dict:
+    """
+    Compute spatial connections for each layer using the configuration settings.
+
+    Parameters:
+        all_layers (dict): Dictionary of GeoDataFrames keyed by layer name.
+        all_features (GeoDataFrame): Combined GeoDataFrame of all features.
+
+    Returns:
+        dict: Updated GeoDataFrames with connection information for each layer.
+    """
     logging.info("Computing connections for each layer...")
     updated_layers = {}
     for layer, gdf in all_layers.items():
         logging.info(f"Processing connections for layer '{layer}'...")
-        exclude_list = csv_files[layer].get("exclude_connections", [])
-        priority_connections = csv_files[layer].get("priority_connections", None)
-        mono_connection = csv_files[layer].get("mono_connection_per_endpoint", False)
-        radius = csv_files[layer].get("radius", CONNECTION_RADIUS["mid"])
+        config = csv_files[layer]
+        exclude_list = config.get("exclude_connections", [])
+        priority_connections = config.get("priority_connections", None)
+        mono_connection = config.get("mono_connection_per_endpoint", False)
+        radius = config.get("radius", CONNECTION_RADIUS["mid"])
         updated_gdf = find_connections(
             gdf,
             all_features,
@@ -36,15 +56,30 @@ def main() -> None:
             mono_connection,
         )
         updated_layers[layer] = updated_gdf
+    return updated_layers
 
+
+def log_performance(all_layers: dict, elapsed: float) -> None:
+    """
+    Log processing performance statistics.
+
+    Parameters:
+        all_layers (dict): Dictionary of GeoDataFrames.
+        elapsed (float): Total time elapsed.
+    """
+    total_features = sum(len(layer) for layer in all_layers.values())
+    logging.info(f"Processed {total_features} features in {elapsed:.2f} seconds.")
+    logging.info(f"Average features processed per second: {total_features/elapsed:.2f}")
+
+
+def main() -> None:
+    start_time = time.time()
+    all_layers, all_features = load_all_layers()
+    updated_layers = compute_connections_for_layers(all_layers, all_features)
     logging.info("Saving updated GeoJSON files...")
     save_updated_layers(updated_layers)
-    count_all_features = sum([len(layer) for layer in all_layers.values()])
     elapsed = time.time() - start_time
-    logging.info(f"Processed {count_all_features} features in {elapsed:.2f} seconds.")
-    logging.info(
-        f"Average features processed per second: {count_all_features/elapsed:.2f}"
-    )
+    log_performance(all_layers, elapsed)
 
 
 if __name__ == "__main__":
