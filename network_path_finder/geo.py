@@ -5,60 +5,62 @@ Geospatial utilities for the Network Path Finder.
 import logging
 import geopandas as gpd
 from shapely.geometry import Point
-from config import BT_LAYERS
+from config import BT_LAYERS, MAX_BT_DISTANCE
 
 
-def find_closest_bt_element(point, layers):
+def find_closest_bt_elements(point, layers, max_elements=10):
     """
-    Find the closest BT network element to the given point.
+    Find multiple BT network elements closest to the given point, sorted by distance.
 
     Args:
         point (Point): Shapely Point object (in EPSG:4326)
         layers (dict): Dictionary of layer_name -> GeoDataFrame
+        max_elements (int): Maximum number of closest elements to return
 
     Returns:
-        tuple: (layer_name, feature_id, distance_km, feature) or None if no BT layers found
+        list: List of tuples (layer_name, feature_id, distance_km, feature) sorted by distance
     """
-    closest_feature = None
-    closest_distance = float("inf")
-    closest_layer = None
-
-    # Project point to a metric CRS for accurate distance calculations
     point_gdf = gpd.GeoDataFrame(geometry=[point], crs="EPSG:4326")
     point_proj = point_gdf.to_crs("EPSG:3857")
     point_geom_proj = point_proj.geometry.iloc[0]
+
+    all_distances = []
 
     for layer_name in BT_LAYERS:
         if layer_name not in layers:
             logging.warning(f"Layer {layer_name} not found")
             continue
 
-        # Project to the same CRS for distance calculation
         gdf = layers[layer_name]
+        if gdf.empty:
+            continue
+
         gdf_proj = gdf.to_crs("EPSG:3857")
 
         distances = gdf_proj.geometry.distance(point_geom_proj)
         if distances.empty:
             continue
 
-        min_idx = distances.idxmin()
-        min_distance = distances[min_idx]
+        for idx, distance in distances.items():
+            feature = gdf.iloc[idx]
+            feature_id = feature["id"]
+            distance_km = distance / 1000.0
 
-        if min_distance < closest_distance:
-            closest_distance = min_distance
-            closest_feature = gdf.iloc[min_idx]
-            closest_layer = layer_name
+            if distance_km <= MAX_BT_DISTANCE:
+                all_distances.append((distance_km, layer_name, feature_id, feature))
 
-    if closest_feature is None:
-        return None
+    all_distances.sort()
+    closest_elements = []
 
-    feature_id = closest_feature["id"]
-    distance_km = closest_distance / 1000.0
+    for i, (distance_km, layer_name, feature_id, feature) in enumerate(
+        all_distances[:max_elements]
+    ):
+        logging.info(
+            f"BT element #{i+1}: {feature_id} ({layer_name}) at {distance_km:.2f} km"
+        )
+        closest_elements.append((layer_name, feature_id, distance_km, feature))
 
-    logging.info(
-        f"Closest BT element: {feature_id} ({closest_layer}) at {distance_km:.2f} km"
-    )
-    return (closest_layer, feature_id, distance_km, closest_feature)
+    return closest_elements
 
 
 def extract_path_features(path, layers):
