@@ -1,0 +1,6 @@
+folium==0.19.5
+geopandas==1.0.1
+shapely==2.1.0
+matplotlib==3.9.3
+matplotlib-inline==0.1.7
+rtree==1.4.0
