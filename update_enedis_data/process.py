@@ -8,74 +8,80 @@ spatiales entre entités, puis de sauvegarder le résultat sous forme de fichier
 
 import os
 import logging
+import tempfile
 import geopandas as gpd
 import pandas as pd
-from config import PROCESSED_DIR, LAYERS_CONFIG
+import zipfile
+from datetime import datetime
+
+from config import (
+    PROCESSED_DIR,
+    LAYERS_CONFIG,
+    USE_CLOUD_STORAGE,
+    CLOUD_BUCKET_NAME,
+    SHOULD_EXPORT_GEOJSON,
+    SHOULD_EXPORT_SHAPEFILE,
+)
 from loader import load_csv_to_gdf
-from connections import find_connections
-import json
-from shapely.geometry import shape
+from cloud_storage_utils import upload_file_to_cloud
 
 
-def compute_connections(layers):
+def add_filedate(gdf):
     """
-    Reprojette les GeoDataFrames en EPSG:4326, les concatène pour créer un GeoDataFrame global,
-    et calcule les connexions spatiales pour chaque couche.
+    Ajoute une colonne 'filedate' avec la date du jour au format YYYYMMDD.
 
     Parameters:
-        layers (dict): Dictionnaire des GeoDataFrames pour chaque couche.
+        gdf (GeoDataFrame): Données géographiques à enrichir.
 
     Returns:
-        dict: Dictionnaire mis à jour associant chaque couche à un GeoDataFrame enrichi avec
-              les colonnes "connections", "start_connections" et "end_connections".
+        GeoDataFrame: Données avec colonne filedate ajoutée.
     """
-    reprojected_layers = {}
-    for layer_key, gdf in layers.items():
-        if "source_layer" not in gdf.columns:
-            gdf["source_layer"] = layer_key
-        if gdf.crs is None:
-            gdf.set_crs("EPSG:4326", allow_override=True, inplace=True)
-        else:
-            gdf = gdf.to_crs("EPSG:4326")
-        reprojected_layers[layer_key] = gdf
-
-    all_features = gpd.GeoDataFrame(
-        pd.concat(list(reprojected_layers.values()), ignore_index=True), crs="EPSG:4326"
-    )
-    updated_layers = {}
-    for layer_key, gdf in layers.items():
-        cfg = LAYERS_CONFIG.get(layer_key, {})
-        exclude = cfg.get("exclude_connections", [])
-        priority = cfg.get("priority_connections", None)
-        mono = cfg.get("mono_connection_per_endpoint", False)
-        radius = cfg.get("radius", 3)
-        updated_gdf = find_connections(
-            gdf, all_features, radius, exclude, priority, mono
-        )
-        updated_layers[layer_key] = updated_gdf
-    return updated_layers
+    gdf["filedate"] = datetime.today().strftime("%Y%m%d")
+    return gdf
 
 
 def save_updated_layers(updated_layers):
     """
-    Sauvegarde en GeoJSON chaque GeoDataFrame mis à jour dans le répertoire de sortie.
+    Sauvegarde chaque GeoDataFrame mis à jour en GeoJSON.
+    Si l'option cloud est activée (USE_CLOUD_STORAGE), le fichier est également téléversé dans le bucket cloud.
+    La sauvegarde locale se fait dans le répertoire PROCESSED_DIR.
 
     Parameters:
         updated_layers (dict): Dictionnaire des GeoDataFrames mis à jour.
     """
-    if not os.path.exists(PROCESSED_DIR):
-        os.makedirs(PROCESSED_DIR)
+    if not updated_layers:
+        logging.info("Aucune couche à sauvegarder.")
+        return
+
     for layer_key, gdf in updated_layers.items():
-        output_path = os.path.join(
-            PROCESSED_DIR, LAYERS_CONFIG[layer_key]["geojson_file"]
-        )
         try:
-            gdf.to_file(output_path, driver="GeoJSON")
-            logging.info(
-                f"Saved updated GeoJSON for layer '{layer_key}' to {output_path}"
-            )
+            gdf = add_filedate(gdf)
+            output_filename = LAYERS_CONFIG[layer_key]["geojson_file"]
+            output_path = os.path.join(PROCESSED_DIR, output_filename)
+
+            if USE_CLOUD_STORAGE:
+                logging.info(
+                    f"Téléversement de la couche '{layer_key}' vers le cloud..."
+                )
+                with tempfile.NamedTemporaryFile(
+                    "w+", delete=False, suffix=".geojson"
+                ) as tmp:
+                    temp_path = tmp.name
+                gdf.to_file(temp_path, driver="GeoJSON")
+                upload_file_to_cloud(temp_path, CLOUD_BUCKET_NAME, output_filename)
+                os.remove(temp_path)
+                logging.info(f"GeoJSON téléversé dans le cloud: {output_filename}")
+            else:
+                os.makedirs(PROCESSED_DIR, exist_ok=True)
+                logging.info(f"Sauvegarde locale de la couche '{layer_key}'...")
+                gdf.to_file(output_path, driver="GeoJSON")
+                logging.info(f"GeoJSON sauvegardé localement à {output_path}")
+
         except Exception as e:
-            logging.error(f"Error saving {output_path}: {e}")
+            logging.error(
+                f"Erreur lors de la sauvegarde de la couche '{layer_key}': {e}"
+            )
+            raise e
 
 
 def save_geojson(gdf, layer_key):
@@ -86,12 +92,76 @@ def save_geojson(gdf, layer_key):
         gdf (GeoDataFrame): Ensemble de données à sauvegarder.
         layer_key (str): Clé de la couche dans LAYERS_CONFIG pour déterminer le nom du fichier.
     """
-    output_path = os.path.join(PROCESSED_DIR, LAYERS_CONFIG[layer_key]["geojson_file"])
-    try:
-        gdf.to_file(output_path, driver="GeoJSON")
-        logging.info(f"Saved GeoJSON for layer '{layer_key}' to {output_path}.")
-    except Exception as e:
-        logging.error(f"Error saving {output_path}: {e}")
+    gdf = add_filedate(gdf)
+    output_filename = LAYERS_CONFIG[layer_key]["geojson_file"]
+
+    if USE_CLOUD_STORAGE:
+        logging.info(
+            f"Saving GeoJSON for layer '{layer_key}' to Cloud Storage in bucket {CLOUD_BUCKET_NAME}..."
+        )
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".geojson") as tmp:
+            temp_path = tmp.name
+        gdf.to_file(temp_path, driver="GeoJSON")
+        upload_file_to_cloud(temp_path, CLOUD_BUCKET_NAME, output_filename)
+        os.remove(temp_path)
+        logging.info(
+            f"Saved GeoJSON for layer '{layer_key}' to cloud as {output_filename}."
+        )
+    else:
+        if not os.path.exists(PROCESSED_DIR):
+            os.makedirs(PROCESSED_DIR)
+        output_path = os.path.join(PROCESSED_DIR, output_filename)
+        try:
+            gdf.to_file(output_path, driver="GeoJSON")
+            logging.info(
+                f"Saved updated GeoJSON for layer '{layer_key}' to {output_path}"
+            )
+        except Exception as e:
+            logging.error(f"Error saving {output_path}: {e}")
+
+
+def save_shapefile(gdf, layer_key):
+    """
+    Sauvegarde un GeoDataFrame en tant que ShapeFile pour une couche donnée.
+
+    Parameters:
+        gdf (GeoDataFrame): Ensemble de données à sauvegarder.
+        layer_key (str): Clé de la couche dans LAYERS_CONFIG utilisée pour déterminer le nom du fichier.
+    """
+    gdf = add_filedate(gdf)
+    if USE_CLOUD_STORAGE:
+        logging.info(
+            f"Saving Shapefile for layer '{layer_key}' to Cloud Storage in bucket {CLOUD_BUCKET_NAME}..."
+        )
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            base_filename = layer_key
+            shapefile_path = os.path.join(tmpdirname, base_filename + ".shp")
+
+            gdf.to_file(shapefile_path, driver="ESRI Shapefile")
+            zip_filename = LAYERS_CONFIG[layer_key].get(
+                "shapefile_file", f"{layer_key}.zip"
+            )
+            zip_path = os.path.join(tmpdirname, zip_filename)
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for filename in os.listdir(tmpdirname):
+                    if filename.startswith(base_filename):
+                        full_path = os.path.join(tmpdirname, filename)
+                        zipf.write(full_path, arcname=filename)
+
+            upload_file_to_cloud(zip_path, CLOUD_BUCKET_NAME, zip_filename)
+            logging.info(
+                f"Saved Shapefile for layer '{layer_key}' to cloud as {zip_filename}."
+            )
+    else:
+        if not os.path.exists(PROCESSED_DIR):
+            os.makedirs(PROCESSED_DIR)
+        shapefile_path = os.path.join(PROCESSED_DIR, layer_key + ".shp")
+        try:
+            gdf.to_file(shapefile_path, driver="ESRI Shapefile")
+            logging.info(f"Saved Shapefile for layer '{layer_key}' to {shapefile_path}")
+        except Exception as e:
+            logging.error(f"Error saving shapefile at {shapefile_path}: {e}")
 
 
 def process_csv_layers():
@@ -108,5 +178,9 @@ def process_csv_layers():
         logging.info(f"Processing layer '{layer_key}' from CSV...")
         gdf = load_csv_to_gdf(layer_key)
         layers[layer_key] = gdf
-        save_geojson(gdf, layer_key)
+        if SHOULD_EXPORT_GEOJSON:
+            save_geojson(gdf, layer_key)
+        if SHOULD_EXPORT_SHAPEFILE:
+            save_shapefile(gdf, layer_key)
+
     return layers

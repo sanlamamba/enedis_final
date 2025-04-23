@@ -88,6 +88,21 @@ LAYERS_CONFIG = {
         "color": "cadetblue",
         "layer_name": "Reseau Aérienne BT",
     },
+    "reseau_hta": {
+        "csv_file": "reseau-hta.csv",
+        "geojson_file": "reseau_hta.geojson",
+        "solo_connection_if": {
+            "postes_source": {"priority": 1, "radius": CONNECTION_RADIUS["far"]},
+            "postes_electrique": {"priority": 2, "radius": CONNECTION_RADIUS["mid"]},
+            "position_geographique": {
+                "priority": 3,
+                "radius": CONNECTION_RADIUS["mid"],
+            },
+        },
+        "radius": CONNECTION_RADIUS["close"],
+        "color": "red",
+        "layer_name": "Reseau Aérienne HTA",
+    },
     "reseau_souterrain_hta": {
         "csv_file": "reseau-souterrain-hta.csv",
         "geojson_file": "reseau_souterrain_hta.geojson",
@@ -107,3 +122,15 @@ LAYERS_CONFIG = {
 
 FOLIUM_MAP_OUTPUT = os.path.join(PROCESSED_DIR, "folium_map.html")
 PYVIS_NETWORK_OUTPUT = os.path.join(PROCESSED_DIR, "pyvis_network.html")
+
+USE_CLOUD_STORAGE = True
+CLOUD_BUCKET_PROJECT = "ofr-2kt-valo-reseau-1-lab-prd"
+CLOUD_BUCKET_NAME = " ofr-2kt-valo-enedis"
+
+CLOUD_DATA_DIR = "downloaded"
+CLOUD_PROCESSED_DIR = "processed"
+BIGQUERY_TABLE_ID = "ofr-2kt-valo-reseau-1-lab-prd.ofr_2kt_enedis"
+
+
+SHOULD_EXPORT_GEOJSON = True
+SHOULD_EXPORT_SHAPEFILE = False

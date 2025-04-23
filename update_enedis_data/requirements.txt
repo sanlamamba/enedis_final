@@ -1,7 +1,17 @@
+# Core dependencies
 pandas==2.2.3
 geopandas==1.0.1
 shapely==2.0.7
-folium==0.19.4
-pyvis==0.3.2
-tqdm==4.67.1
 pyproj==3.7.0
+
+# Google Cloud dependencies
+google-cloud-bigquery==3.11.0
+google-cloud-storage==2.10.0
+functions-framework==3.8.1
+
+# Visualization dependencies
+pyvis==0.3.2
+folium==0.19.4
+
+# Miscellaneous dependencies
+tqdm==4.67.1

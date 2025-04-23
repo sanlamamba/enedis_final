@@ -10,11 +10,13 @@ et de la génération des visualisations.
 
 import time
 import logging
-from process import process_csv_layers, compute_connections, save_updated_layers
+from process import process_csv_layers, save_updated_layers
 from visualize import create_folium_map, create_pyvis_network
+from connections import compute_connections
+from bigquery_utils import upload_layers_to_bigquery
 
 
-def main():
+def update_geojson_enedis():
     start_time = time.time()
     logging.info("=== Pipeline démarré ===")
 
@@ -22,10 +24,11 @@ def main():
     logging.info("Étape 1 : Traitement des CSV")
     layers = process_csv_layers()
 
-    # Étape 2 : Calcul des connexions spatiales
     logging.info("Étape 2 : Calcul des connexions spatiales")
     updated_layers = compute_connections(layers)
     save_updated_layers(updated_layers)
+
+    upload_layers_to_bigquery(updated_layers)
 
     # Étape 3 : Génération des visualisations
     logging.info("Étape 3 : Génération des visualisations")
@@ -36,5 +39,4 @@ def main():
     logging.info(f"=== Pipeline terminé en {elapsed:.2f} secondes ===")
 
 
-if __name__ == "__main__":
-    main()
+update_geojson_enedis()

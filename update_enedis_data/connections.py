@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 import geopandas as gpd
 from shapely.geometry import Point
 from config import LAYERS_CONFIG
+import pandas as pd
 
 _global_all_features_proj = None
 _global_spatial_index = None
@@ -229,3 +230,42 @@ def find_connections(
     gdf_proj["start_connections"] = start_connections
     gdf_proj["end_connections"] = end_connections
     return gdf_proj.to_crs(epsg=4326)
+
+
+def compute_connections(layers):
+    """
+    Reprojette les GeoDataFrames en EPSG:4326, les concatène pour créer un GeoDataFrame global,
+    et calcule les connexions spatiales pour chaque couche.
+
+    Parameters:
+        layers (dict): Dictionnaire des GeoDataFrames pour chaque couche.
+
+    Returns:
+        dict: Dictionnaire mis à jour associant chaque couche à un GeoDataFrame enrichi avec
+        les colonnes "connections", "start_connections" et "end_connections".
+    """
+    reprojected_layers = {}
+    for layer_key, gdf in layers.items():
+        if "source_layer" not in gdf.columns:
+            gdf["source_layer"] = layer_key
+        if gdf.crs is None:
+            gdf.set_crs("EPSG:4326", allow_override=True, inplace=True)
+        else:
+            gdf = gdf.to_crs("EPSG:4326")
+        reprojected_layers[layer_key] = gdf
+
+    all_features = gpd.GeoDataFrame(
+        pd.concat(list(reprojected_layers.values()), ignore_index=True), crs="EPSG:4326"
+    )
+    updated_layers = {}
+    for layer_key, gdf in layers.items():
+        cfg = LAYERS_CONFIG.get(layer_key, {})
+        exclude = cfg.get("exclude_connections", [])
+        priority = cfg.get("priority_connections", None)
+        mono = cfg.get("mono_connection_per_endpoint", False)
+        radius = cfg.get("radius", 3)
+        updated_gdf = find_connections(
+            gdf, all_features, radius, exclude, priority, mono
+        )
+        updated_layers[layer_key] = updated_gdf
+    return updated_layers
