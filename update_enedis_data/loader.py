@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Module de chargement des données pour le projet Enedis.
+Data loading module for the Enedis project.
 
-Ce module fournit des fonctions pour charger les données depuis des fichiers CSV ou GeoJSON.
-Les données CSV sont converties en GeoDataFrame en extrayant la géométrie depuis le champ "geo_shape".
-Chaque couche est définie dans LAYERS_CONFIG.
+This module provides functions for loading data from CSV or GeoJSON files.
+CSV data is converted to GeoDataFrame by extracting geometry from the 'geo_shape' field.
+Each layer is defined in LAYERS_CONFIG.
 """
 
 import os
 import logging
-import geopandas as gpd
-import pandas as pd
 import json
+from typing import Dict, Optional, Union
+from pathlib import Path
+
+import pandas as pd
+import geopandas as gpd
 from shapely.geometry import shape
+
 from config import (
     DATA_DIR,
     PROCESSED_DIR,
@@ -23,23 +27,29 @@ from config import (
     CLOUD_DATA_DIR,
 )
 from cloud_storage_utils import read_text_from_cloud, download_blob_to_temp_file
+from utils import extract_geometry_from_json, retry, timed
 
 
-def load_csv_to_gdf(layer_key):
+@timed
+def load_csv_to_gdf(layer_key: str) -> gpd.GeoDataFrame:
     """
-    Charge un fichier CSV pour une couche donnée et le convertit en GeoDataFrame.
+    Load a CSV file for a given layer and convert it to a GeoDataFrame.
 
-    Si l'option cloud est activée, le fichier est récupéré depuis le bucket cloud.
-    En cas d'erreur, l'exception est levée.
+    If cloud storage is enabled, the file is retrieved from the cloud bucket.
+    In case of error, the exception is raised.
 
-    Parameters:
-        layer_key (str): Clé identifiant la couche dans LAYERS_CONFIG.
+    Args:
+        layer_key: Key identifying the layer in LAYERS_CONFIG.
 
     Returns:
-        GeoDataFrame
+        GeoDataFrame with the data from the CSV.
+
+    Raises:
+        FileNotFoundError: If the CSV file is not found.
+        ValueError: If no valid geometries are found in the CSV.
     """
     config = LAYERS_CONFIG[layer_key]
-    csv_filename = config["csv_file"]
+    csv_filename = config.csv_file
 
     try:
         if USE_CLOUD_STORAGE:
@@ -51,7 +61,12 @@ def load_csv_to_gdf(layer_key):
                 CLOUD_BUCKET_NAME, cloud_csv_path
             )
             df = pd.read_csv(
-                temp_file_path, delimiter=";", encoding="utf-8", engine="python"
+                temp_file_path,
+                delimiter=";",
+                encoding="utf-8",
+                # engine="python",
+                on_bad_lines="warn",
+                # low_memory=False,
             )
             os.remove(temp_file_path)
         else:
@@ -60,19 +75,28 @@ def load_csv_to_gdf(layer_key):
                 raise FileNotFoundError(f"CSV file not found: {file_path}")
             logging.info(f"Loading CSV for layer '{layer_key}' from {file_path}...")
             df = pd.read_csv(
-                file_path, delimiter=";", encoding="utf-8", engine="python"
+                file_path,
+                delimiter=";",
+                encoding="utf-8",
+                # engine="python",
+                on_bad_lines="warn",
+                # low_memory=False,
             )
     except Exception as e:
         logging.error(f"Failed to load CSV for layer '{layer_key}': {e}")
         raise
 
+    batch_size = 10000
+    total_rows = len(df)
     geometries = []
-    for geojson_str in df["geo_shape"]:
-        try:
-            geo_dict = json.loads(geojson_str)
-            geometries.append(shape(geo_dict))
-        except Exception:
-            geometries.append(None)
+
+    for i in range(0, total_rows, batch_size):
+        batch = df.iloc[i : i + batch_size]
+        batch_geometries = [
+            extract_geometry_from_json(geojson_str)
+            for geojson_str in batch["geo_shape"]
+        ]
+        geometries.extend(batch_geometries)
 
     df["geometry"] = geometries
     df = df[df["geometry"].notnull()].copy()
@@ -85,18 +109,22 @@ def load_csv_to_gdf(layer_key):
     return gdf
 
 
-def load_geojson(layer_key):
+@timed
+def load_geojson(layer_key: str) -> gpd.GeoDataFrame:
     """
-    Charge un fichier GeoJSON pour une couche donnée et retourne un GeoDataFrame.
+    Load a GeoJSON file for a given layer and return a GeoDataFrame.
 
-    Parameters:
-        layer_key (str): Clé identifiant la couche dans LAYERS_CONFIG.
+    Args:
+        layer_key: Key identifying the layer in LAYERS_CONFIG.
 
     Returns:
-        GeoDataFrame
+        GeoDataFrame with the data from the GeoJSON.
+
+    Raises:
+        FileNotFoundError: If the GeoJSON file is not found.
     """
     config = LAYERS_CONFIG[layer_key]
-    file_path = os.path.join(PROCESSED_DIR, config["geojson_file"])
+    file_path = os.path.join(PROCESSED_DIR, config.geojson_file)
 
     try:
         if not os.path.exists(file_path):
@@ -114,24 +142,82 @@ def load_geojson(layer_key):
         raise
 
 
-def load_all_layers(use_csv=False):
+@timed
+def load_all_layers(use_csv: bool = False) -> Dict[str, gpd.GeoDataFrame]:
     """
-    Charge toutes les couches définies dans LAYERS_CONFIG.
-    S'arrête immédiatement si une couche échoue à se charger.
+    Load all layers defined in LAYERS_CONFIG.
+    Stops immediately if a layer fails to load.
 
-    Parameters:
-        use_csv (bool): Si True, les couches sont chargées depuis les CSV, sinon depuis les GeoJSON.
+    Args:
+        use_csv: If True, layers are loaded from CSV, otherwise from GeoJSON.
 
     Returns:
-        dict: Clés = noms de couches, valeurs = GeoDataFrames.
+        Dictionary with layer names as keys and GeoDataFrames as values.
     """
     layers = {}
-    for layer_key in LAYERS_CONFIG:
-        if use_csv:
-            gdf = load_csv_to_gdf(layer_key)
-        else:
-            gdf = load_geojson(layer_key)
 
-        layers[layer_key] = gdf
+    from concurrent.futures import ThreadPoolExecutor
+
+    def load_layer(layer_key):
+        if use_csv:
+            return layer_key, load_csv_to_gdf(layer_key)
+        else:
+            return layer_key, load_geojson(layer_key)
+
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(load_layer, layer_key) for layer_key in LAYERS_CONFIG
+        ]
+        for future in futures:
+            try:
+                layer_key, gdf = future.result()
+                layers[layer_key] = gdf
+            except Exception as e:
+                logging.error(f"Error loading layer: {e}")
+                raise
 
     return layers
+
+
+@retry(max_attempts=3)
+def load_cached_layer(layer_key: str, use_csv: bool = False) -> gpd.GeoDataFrame:
+    """
+    Load a layer with caching capabilities.
+
+    Args:
+        layer_key: Key identifying the layer in LAYERS_CONFIG.
+        use_csv: If True, load from CSV, otherwise from GeoJSON.
+
+    Returns:
+        GeoDataFrame for the specified layer.
+    """
+    cache_dir = PROCESSED_DIR / "cache"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    cache_file = cache_dir / f"{layer_key}_cached.gpkg"
+
+    if (
+        cache_file.exists()
+        and (
+            pd.Timestamp.now() - pd.Timestamp.fromtimestamp(cache_file.stat().st_mtime)
+        ).days
+        < 1
+    ):
+        try:
+            logging.info(f"Loading cached layer '{layer_key}' from {cache_file}")
+            return gpd.read_file(cache_file)
+        except Exception as e:
+            logging.warning(f"Failed to load cached layer, will reload: {e}")
+
+    if use_csv:
+        gdf = load_csv_to_gdf(layer_key)
+    else:
+        gdf = load_geojson(layer_key)
+
+    try:
+        gdf.to_file(cache_file, driver="GPKG")
+        logging.info(f"Saved layer '{layer_key}' to cache at {cache_file}")
+    except Exception as e:
+        logging.warning(f"Failed to cache layer: {e}")
+
+    return gdf
