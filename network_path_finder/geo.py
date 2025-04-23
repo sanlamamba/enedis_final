@@ -5,7 +5,7 @@ Geospatial utilities for the Network Path Finder.
 import logging
 import geopandas as gpd
 from shapely.geometry import Point
-from .config import BT_LAYERS
+from config import BT_LAYERS
 
 
 def find_closest_bt_element(point, layers):

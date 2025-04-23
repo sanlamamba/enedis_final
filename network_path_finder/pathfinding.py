@@ -4,7 +4,7 @@ Pathfinding algorithms for the Network Path Finder.
 
 import logging
 from collections import deque
-from .config import SOURCE_SUBSTATION_LAYER
+from config import SOURCE_SUBSTATION_LAYER
 
 
 def find_path_to_source(start_layer, start_id, network_lookup):

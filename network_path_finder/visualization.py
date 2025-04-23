@@ -5,7 +5,7 @@ Visualization utilities for the Network Path Finder.
 import logging
 from pathlib import Path
 import json
-from .config import LAYER_COLORS
+from config import LAYER_COLORS
 
 
 def save_results(point, closest_info, path, path_features, output_file):

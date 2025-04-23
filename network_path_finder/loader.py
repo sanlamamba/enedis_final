@@ -5,7 +5,9 @@ Data loading utilities for the Network Path Finder.
 import logging
 import geopandas as gpd
 from pathlib import Path
-from .config import ALL_LAYERS
+from shapely.geometry import shape
+from config import ALL_LAYERS
+import json
 
 
 def load_geojson_layers(data_dir):
@@ -24,15 +26,48 @@ def load_geojson_layers(data_dir):
         file_path = data_dir / f"{layer_name}.geojson"
         if file_path.exists():
             logging.info(f"Loading layer: {layer_name}")
-            gdf = gpd.read_file(file_path)
 
-            # Ensure CRS is set to WGS84 for consistent operations
-            if gdf.crs is None:
-                gdf = gdf.set_crs("EPSG:4326")
-            elif gdf.crs != "EPSG:4326":
-                gdf = gdf.to_crs("EPSG:4326")
+            try:
+                with open(file_path, "r") as f:
+                    geojson_data = json.load(f)
 
-            layers[layer_name] = gdf
+                features = []
+                for feature in geojson_data.get("features", []):
+                    properties = feature.get("properties", {})
+                    geometry_obj = feature.get("geometry", {})
+
+                    feature_dict = properties.copy()
+
+                    feature_dict["geometry"] = shape(geometry_obj)
+
+                    for conn_field in [
+                        "connections",
+                        "start_connections",
+                        "end_connections",
+                    ]:
+                        if conn_field in properties:
+                            if isinstance(properties[conn_field], list):
+                                feature_dict[conn_field] = properties[conn_field]
+                            elif properties[conn_field] is None:
+                                feature_dict[conn_field] = []
+                        else:
+                            feature_dict[conn_field] = []
+
+                    features.append(feature_dict)
+
+                gdf = gpd.GeoDataFrame(features, crs="EPSG:4326")
+
+                if gdf.crs is None:
+                    gdf = gdf.set_crs("EPSG:4326")
+                elif gdf.crs != "EPSG:4326":
+                    gdf = gdf.to_crs("EPSG:4326")
+
+                gdf["source_layer"] = layer_name
+
+                layers[layer_name] = gdf
+
+            except Exception as e:
+                logging.error(f"Error loading {file_path}: {e}")
         else:
             logging.warning(f"File not found: {file_path}")
 
@@ -42,21 +77,20 @@ def load_geojson_layers(data_dir):
 def build_network_lookup(layers):
     """
     Build a lookup dictionary of all features across all layers.
-
-    Args:
-        layers (dict): Dictionary of layer_name -> GeoDataFrame
-
-    Returns:
-        dict: Dictionary of feature_id -> feature information
     """
     all_features = {}
 
     for layer_name, gdf in layers.items():
         for idx, row in gdf.iterrows():
             feature_id = row["id"]
+
+            connections = row.get("connections", [])
+            if isinstance(connections, list) and len(connections) == 1:
+                connections = connections[0]
+
             all_features[feature_id] = {
                 "layer": layer_name,
-                "connections": row.get("connections", []),
+                "connections": connections,
                 "feature": row,
             }
 

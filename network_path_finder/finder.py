@@ -5,17 +5,17 @@ Main module for the Network Path Finder.
 import logging
 from shapely.geometry import Point
 
-from .config import (
+from config import (
     DATA_DIR,
     OUTPUT_FILE,
     MAP_OUTPUT_FILE,
     TARGET_LONGITUDE,
     TARGET_LATITUDE,
 )
-from .loader import load_geojson_layers, build_network_lookup
-from .geo import find_closest_bt_element, extract_path_features
-from .pathfinding import find_path_to_source
-from .visualization import save_results, generate_folium_map
+from loader import load_geojson_layers, build_network_lookup
+from geo import find_closest_bt_element, extract_path_features
+from pathfinding import find_path_to_source
+from visualization import save_results, generate_folium_map
 
 
 def find_closest_path(
@@ -38,18 +38,15 @@ def find_closest_path(
             - path_to_source
             - path_features
     """
-    # Use provided parameters or defaults from config
     lon = lon if lon is not None else TARGET_LONGITUDE
     lat = lat if lat is not None else TARGET_LATITUDE
     data_dir = data_dir if data_dir is not None else DATA_DIR
     output_file = output_file if output_file is not None else OUTPUT_FILE
     map_file = map_file if map_file is not None else MAP_OUTPUT_FILE
 
-    # Create point from coordinates
     point = Point(lon, lat)
     logging.info(f"Finding closest BT element to point: ({lon}, {lat})")
 
-    # Load GeoJSON layers
     layers = load_geojson_layers(data_dir)
     if not layers:
         logging.error("No layers loaded. Check data directory path.")
