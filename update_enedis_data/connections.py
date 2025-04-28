@@ -267,7 +267,7 @@ def find_connections(
 
     # Process features in parallel
     with ProcessPoolExecutor(
-        max_workers=min(os.cpu_count(), 8),  # Limit workers to prevent memory issues
+        max_workers=min(os.cpu_count(), 16),
         initializer=init_worker,
         initargs=(
             all_features_proj,
