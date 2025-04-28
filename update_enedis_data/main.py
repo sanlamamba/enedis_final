@@ -22,11 +22,7 @@ from visualize import (
     create_pyvis_network,
     generate_all_visualizations,
 )
-from connections import compute_connections
-from connections_optimization import optimize_connections
-from connections_validation import validate_connections
-
-# from connections import compute_connections, optimize_connections, validate_connections
+from connections import compute_connections, optimize_connections
 from bigquery_utils import upload_layers_to_bigquery
 from config import PROCESSED_DIR, USE_CLOUD_STORAGE
 from utils import timed
@@ -132,35 +128,17 @@ class EnedisPipeline:
                     "Data validation found issues, but continuing with pipeline"
                 )
 
-            # Step 2: Calculate spatial connections with improved logic
+            # Step 2: Calculate spatial connections
             self.updated_layers = self.calculate_connections(self.layers)
 
-            # Step 3: Optimize network topology
-            self.optimized_layers = self.optimize_network(self.updated_layers)
+            # Step 3: Save updated layers
+            self.save_layers(self.updated_layers)
 
-            # Step 4: Validate connection quality
-            connection_validation = validate_connections(self.optimized_layers)
-            has_conn_issues = any(
-                len(issues) > 0 for issues in connection_validation.values()
-            )
-            if has_conn_issues:
-                logging.warning("Some connection quality issues were detected")
+            # Step 4: Upload to BigQuery
+            bigquery_results = self.upload_to_bigquery(self.updated_layers)
 
-                # Log each issue in detail
-                for layer, issues in connection_validation.items():
-                    if issues:
-                        logging.warning(f"Connection issues in {layer}:")
-                        for issue in issues:
-                            logging.warning(f"  - {issue}")
-
-            # Step 5: Save layers (use optimized layers)
-            self.save_layers(self.optimized_layers)
-
-            # Step 6: Upload to BigQuery
-            # bigquery_results = self.upload_to_bigquery(self.optimized_layers)
-
-            # Step 7: Generate visualizations
-            # visualization_outputs = self.create_visualizations(self.optimized_layers)
+            # Step 5: Generate visualizations
+            visualization_outputs = self.create_visualizations(self.updated_layers)
 
             # Log summary
             elapsed = time.time() - self.start_time
@@ -168,15 +146,15 @@ class EnedisPipeline:
                 f"=== Pipeline completed successfully in {elapsed:.2f} seconds ==="
             )
 
-            # if not self.skip_bigquery and bigquery_results:
-            #     logging.info("BigQuery upload summary:")
-            #     for layer, count in bigquery_results.items():
-            #         logging.info(f"  - {layer}: {count} rows")
+            if not self.skip_bigquery and bigquery_results:
+                logging.info("BigQuery upload summary:")
+                for layer, count in bigquery_results.items():
+                    logging.info(f"  - {layer}: {count} rows")
 
-            # if not self.skip_visualizations and visualization_outputs:
-            #     logging.info("Visualization outputs:")
-            #     for viz_type, output_path in visualization_outputs.items():
-            #         logging.info(f"  - {viz_type}: {output_path}")
+            if not self.skip_visualizations and visualization_outputs:
+                logging.info("Visualization outputs:")
+                for viz_type, output_path in visualization_outputs.items():
+                    logging.info(f"  - {viz_type}: {output_path}")
 
             return True
 
@@ -204,22 +182,6 @@ def parse_arguments():
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
         help="Set the logging level",
-    )
-    parser.add_argument(
-        "--connection-settings",
-        type=str,
-        help="Path to a JSON file with connection settings",
-    )
-    parser.add_argument(
-        "--external-connections",
-        type=str,
-        help="Path to a CSV or GeoJSON file with predefined connections",
-    )
-    parser.add_argument(
-        "--optimize-network",
-        action="store_true",
-        default=True,
-        help="Apply advanced network topology optimization",
     )
     return parser.parse_args()
 
@@ -279,8 +241,11 @@ def update_geojson_enedis():
 
 
 if __name__ == "__main__":
+    # Set environment variable to indicate running as main
     os.environ["RUNNING_AS_MAIN"] = "true"
 
+    # Run the pipeline and get exit code
     exit_code = update_geojson_enedis()
 
+    # Exit with code
     exit(exit_code)

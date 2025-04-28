@@ -83,6 +83,7 @@ def save_geojson(gdf: gpd.GeoDataFrame, layer_key: str) -> Optional[str]:
         Path to saved file or None if an error occurred
     """
     gdf = add_filedate(gdf)
+    gdf = gdf.to_crs("EPSG:4326")
     config = LAYERS_CONFIG.get(layer_key)
     if not config:
         logging.error(f"No configuration found for layer {layer_key}")
