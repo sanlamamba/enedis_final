@@ -22,25 +22,39 @@ from visualize import (
     create_pyvis_network,
     generate_all_visualizations,
 )
-from connections import compute_connections, optimize_connections
+from connections import compute_connections
+from chunked_processor import compute_connections_in_chunks
 from bigquery_utils import upload_layers_to_bigquery
-from config import PROCESSED_DIR, USE_CLOUD_STORAGE
+from config import PROCESSED_DIR, USE_CLOUD_STORAGE, LAYERS_CONFIG
 from utils import timed
 
 
 class EnedisPipeline:
     """Main pipeline class for the Enedis data processing workflow."""
 
-    def __init__(self, skip_visualizations: bool = False, skip_bigquery: bool = False):
+    def __init__(
+        self,
+        skip_visualizations: bool = False,
+        skip_bigquery: bool = False,
+        use_chunked_processing: bool = False,
+        chunk_size: int = 5000,
+        available_memory_gb: float = 8.0,
+    ):
         """
         Initialize the pipeline.
 
         Args:
             skip_visualizations: If True, skip visualization generation
             skip_bigquery: If True, skip BigQuery uploads
+            use_chunked_processing: If True, use chunked processing for large datasets
+            chunk_size: Maximum features per processing chunk
+            available_memory_gb: Available memory in GB for optimizations
         """
         self.skip_visualizations = skip_visualizations
         self.skip_bigquery = skip_bigquery
+        self.use_chunked_processing = use_chunked_processing
+        self.chunk_size = chunk_size
+        self.available_memory_gb = available_memory_gb
         self.start_time = None
         self.layers = {}
         self.updated_layers = {}
@@ -65,8 +79,21 @@ class EnedisPipeline:
         self, layers: Dict[str, gpd.GeoDataFrame]
     ) -> Dict[str, gpd.GeoDataFrame]:
         """Calculate spatial connections between entities."""
-        self.log_step("Calculating spatial connections")
-        return compute_connections(layers)
+        if self.use_chunked_processing:
+            self.log_step("Calculating spatial connections with chunked processing")
+
+            # Determine overlap buffer - use 2x the maximum connection radius
+            max_radius = max(
+                [getattr(cfg, "radius", 3) for cfg in LAYERS_CONFIG.values()]
+            )
+            overlap_buffer = max_radius * 2
+
+            return compute_connections_in_chunks(
+                layers, chunk_size=self.chunk_size, overlap_buffer=overlap_buffer
+            )
+        else:
+            self.log_step("Calculating spatial connections")
+            return compute_connections(layers)
 
     @timed
     def optimize_network(
@@ -74,6 +101,9 @@ class EnedisPipeline:
     ) -> Dict[str, gpd.GeoDataFrame]:
         """Optimize connection network for better visualization."""
         self.log_step("Optimizing connection network")
+        # Note: You could implement chunked optimization here if needed
+        from connections import optimize_connections
+
         return optimize_connections(layers)
 
     @timed
@@ -113,6 +143,9 @@ class EnedisPipeline:
         """
         self.start_time = time.time()
         logging.info("=== Enedis Pipeline Started ===")
+
+        if self.use_chunked_processing:
+            logging.info(f"Using chunked processing with chunk size: {self.chunk_size}")
 
         try:
             # Step 1: Process CSV files
@@ -183,6 +216,26 @@ def parse_arguments():
         default="INFO",
         help="Set the logging level",
     )
+
+    # Add memory management options
+    parser.add_argument(
+        "--use-chunks",
+        action="store_true",
+        help="Use chunked processing for large datasets to reduce memory usage",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=5000,
+        help="Number of features to process per chunk (default: 5000)",
+    )
+    parser.add_argument(
+        "--memory",
+        type=float,
+        default=8.0,
+        help="Available memory in GB (used to optimize processing, default: 8.0)",
+    )
+
     return parser.parse_args()
 
 
@@ -230,7 +283,11 @@ def update_geojson_enedis():
 
     # Initialize and run the pipeline
     pipeline = EnedisPipeline(
-        skip_visualizations=args.skip_visualizations, skip_bigquery=args.skip_bigquery
+        skip_visualizations=args.skip_visualizations,
+        skip_bigquery=args.skip_bigquery,
+        use_chunked_processing=args.use_chunks,
+        chunk_size=args.chunk_size,
+        available_memory_gb=args.memory,
     )
 
     success = pipeline.run()

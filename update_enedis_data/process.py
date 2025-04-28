@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
 import geopandas as gpd
 import pandas as pd
 
@@ -29,6 +28,7 @@ from config import (
 from loader import load_csv_to_gdf
 from cloud_storage_utils import upload_file_to_cloud
 from utils import add_filedate, timed, create_temp_file
+from chunked_processor import process_layers_in_chunks
 
 
 @timed
@@ -186,6 +186,55 @@ def save_shapefile(gdf: gpd.GeoDataFrame, layer_key: str) -> Optional[str]:
     except Exception as e:
         logging.error(f"Error saving shapefile for {layer_key}: {e}")
         return None
+
+
+def process_csv_layers_with_chunking() -> Dict[str, gpd.GeoDataFrame]:
+    """
+    Process CSV data in chunks to reduce memory usage.
+    """
+    layers = {}
+
+    for layer_key in LAYERS_CONFIG:
+        try:
+            logging.info(f"Loading layer '{layer_key}' from CSV...")
+            gdf = load_csv_to_gdf(layer_key)
+
+            if "source_layer" not in gdf.columns:
+                gdf["source_layer"] = layer_key
+
+            output_filename = LAYERS_CONFIG[layer_key].geojson_file
+            output_path = os.path.join(PROCESSED_DIR, output_filename)
+            gdf.to_file(output_path, driver="GeoJSON")
+
+            simplified = gdf[["id", "geometry", "source_layer"]].copy()
+            layers[layer_key] = simplified
+
+        except Exception as e:
+            logging.error(f"Error processing layer '{layer_key}': {e}")
+            raise
+
+    processed_layers = {}
+    for layer_key in LAYERS_CONFIG:
+        try:
+            logging.info(f"Processing layer '{layer_key}' in chunks...")
+            output_filename = LAYERS_CONFIG[layer_key].geojson_file
+            file_path = os.path.join(PROCESSED_DIR, output_filename)
+
+            processed_gdf = process_layers_in_chunks(
+                layer_key,
+                file_path,
+                layers,
+                chunk_size=10000,  # 2000 rows for 4gb RAM, 5000 for 8gb RAM, 10000 for 16gb RAM, 50000 for 32gb RAM
+                overlap_buffer=LAYERS_CONFIG[layer_key].radius * 2,
+            )
+
+            processed_layers[layer_key] = processed_gdf
+
+        except Exception as e:
+            logging.error(f"Error processing layer '{layer_key}' in chunks: {e}")
+            raise
+
+    return processed_layers
 
 
 @timed
