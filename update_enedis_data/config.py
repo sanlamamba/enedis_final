@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = BASE_DIR / "data/chatillon"
+DATA_DIR = BASE_DIR / "data/montreuil"
 PROCESSED_DIR = BASE_DIR / "output"
 
 PROCESSED_DIR.mkdir(exist_ok=True, parents=True)
@@ -88,19 +88,28 @@ LAYERS_CONFIG = {
         csv_file="reseau-souterrain-bt.csv",
         geojson_file="reseau_souterrain_bt.geojson",
         priority_connections={
-            "postes_source": {
+            "postes_electrique": {
                 "priority": 1,
                 "radius": CONNECTION_RADIUS[RadiusType.FAR],
             },
-            "postes_electrique": {
+            "position_geographique": {
                 "priority": 2,
                 "radius": CONNECTION_RADIUS[RadiusType.FAR],
             },
-            "position_geographique": {
+            "reseau_souterrain_bt": {
                 "priority": 3,
-                "radius": CONNECTION_RADIUS[RadiusType.FAR],
+            },
+            "reseau_bt": {
+                "priority": 4,
+            },
+            "reseau_souterrain_hta": {
+                "priority": 5,
+            },
+            "reseau_hta": {
+                "priority": 6,
             },
         },
+        exclude_connections=["postes_source"],
         mono_connection_per_endpoint=True,
         radius=CONNECTION_RADIUS[RadiusType.CLOSE],
         color="blue",
@@ -110,19 +119,28 @@ LAYERS_CONFIG = {
         csv_file="reseau-bt.csv",
         geojson_file="reseau_bt.geojson",
         priority_connections={
-            "postes_source": {
+            "postes_electrique": {
                 "priority": 1,
                 "radius": CONNECTION_RADIUS[RadiusType.FAR],
             },
-            "postes_electrique": {
+            "position_geographique": {
                 "priority": 2,
                 "radius": CONNECTION_RADIUS[RadiusType.FAR],
             },
-            "position_geographique": {
+            "reseau_bt": {
                 "priority": 3,
-                "radius": CONNECTION_RADIUS[RadiusType.FAR],
+            },
+            "reseau_souterrain_bt": {
+                "priority": 4,
+            },
+            "reseau_hta": {
+                "priority": 5,
+            },
+            "reseau_souterrain_hta": {
+                "priority": 6,
             },
         },
+        exclude_connections=["postes_source"],
         mono_connection_per_endpoint=True,
         radius=CONNECTION_RADIUS[RadiusType.CLOSE],
         color="cadetblue",

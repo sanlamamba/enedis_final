@@ -20,7 +20,7 @@ import pandas as pd
 from shapely.geometry import Point, LineString
 from shapely.ops import nearest_points
 
-from config import LAYERS_CONFIG
+from config import LAYERS_CONFIG, CONNECTION_RADIUS, RadiusType
 from utils import timed
 
 # Shared variables for worker processes
@@ -115,8 +115,54 @@ def select_connection_candidates(
     priority_connections = params.priority_connections
     mono_connection = params.mono_connection
 
+    # First try with base radius
+    candidates = _search_with_radius(
+        endpoint,
+        base_radius,
+        spatial_index,
+        all_features_proj,
+        exclude_list,
+        priority_connections,
+        mono_connection,
+        solo_dict,
+        max_connections,
+    )
+
+    # If no candidates found and we have priority connections, try with FAR radius
+    if not candidates and priority_connections and mono_connection:
+        # For BT components, try with FAR radius
+        far_radius = CONNECTION_RADIUS[RadiusType.FAR]
+        candidates = _search_with_radius(
+            endpoint,
+            far_radius,
+            spatial_index,
+            all_features_proj,
+            exclude_list,
+            priority_connections,
+            mono_connection,
+            solo_dict,
+            max_connections,
+        )
+
+    return candidates
+
+
+def _search_with_radius(
+    endpoint: Point,
+    search_radius: float,
+    spatial_index,
+    all_features_proj: gpd.GeoDataFrame,
+    exclude_list: Optional[List[str]],
+    priority_connections: Optional[Dict[str, Dict[str, Any]]],
+    mono_connection: bool,
+    solo_dict: Optional[Dict[str, Dict[str, Any]]],
+    max_connections: int,
+) -> List[ConnectionCandidate]:
+    """
+    Search for connection candidates with a specific radius.
+    """
     # Create a buffer around the endpoint
-    buf = endpoint.buffer(base_radius)
+    buf = endpoint.buffer(search_radius)
 
     # Use spatial index for efficient querying
     possible_idx = list(spatial_index.intersection(buf.bounds))
@@ -179,7 +225,8 @@ def select_connection_candidates(
             for _, row in candidates.iterrows():
                 source_layer = row["source_layer"]
                 layer_config = priority_connections.get(source_layer, {})
-                max_radius = layer_config.get("radius", base_radius)
+                # Use specific radius if defined, otherwise use default search radius
+                max_radius = layer_config.get("radius", search_radius)
 
                 if row["distance"] <= max_radius:
                     priority = layer_config.get("priority", 999)
