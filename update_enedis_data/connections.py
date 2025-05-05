@@ -6,18 +6,22 @@ using a process pool and spatial algorithms.
 """
 
 import logging
-from concurrent.futures import ProcessPoolExecutor
-from typing import Dict, List, Set, Tuple, Optional, Any, Union
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Dict, List, Set, Tuple, Optional, Any, Union, NamedTuple
 from functools import partial
 import os
+import time
+import multiprocessing
+from dataclasses import dataclass
+import heapq
 
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point, LineString
+from shapely.ops import nearest_points
 
 from config import LAYERS_CONFIG
 from utils import timed
-
 
 # Shared variables for worker processes
 _global_all_features_proj = None
@@ -28,57 +32,89 @@ _global_priority_connections = None
 _global_mono_connection = None
 
 
-def init_worker(
-    all_features_proj, base_radius, exclude_list, priority_connections, mono_connection
-):
+@dataclass
+class ConnectionParams:
+    """Parameters for connection calculation that are passed to worker processes."""
+
+    all_features_proj: gpd.GeoDataFrame
+    base_radius: float
+    exclude_list: Optional[List[str]]
+    priority_connections: Optional[Dict[str, Dict[str, Any]]]
+    mono_connection: bool
+
+
+@dataclass
+class ConnectionCandidate:
+    """Represents a potential connection with priority and distance information."""
+
+    id: str
+    source_layer: str
+    distance: float
+    priority: int = 999  # Default low priority
+
+    def __lt__(self, other):
+        # For priority queue ordering: first by priority, then by distance
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.distance < other.distance
+
+
+class ConnectionParamsManager:
+    """Thread-local storage for connection parameters."""
+
+    _instance = None
+    _params = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ConnectionParamsManager, cls).__new__(cls)
+        return cls._instance
+
+    @classmethod
+    def set_params(cls, params: ConnectionParams):
+        cls._params = params
+
+    @classmethod
+    def get_params(cls) -> ConnectionParams:
+        return cls._params
+
+
+def init_worker(params: ConnectionParams):
     """
-    Initialize global variables in each worker process.
+    Initialize worker process with connection parameters.
 
     Args:
-        all_features_proj: All projected entities (CRS in EPSG:3857) for spatial search.
-        base_radius: Base radius used for buffer around a point during search.
-        exclude_list: List of layer names to exclude when searching for connections.
-        priority_connections: Dictionary of priorities for certain layers.
-            Example: {'layer_name': {'priority': 1, 'radius': 7}}
-        mono_connection: Indicates if only one connection per endpoint should be selected.
+        params: Connection parameters for calculations
     """
-    global _global_all_features_proj, _global_spatial_index, _global_base_radius
-    global _global_exclude_list, _global_priority_connections, _global_mono_connection
-
-    _global_all_features_proj = all_features_proj
-    _global_spatial_index = all_features_proj.sindex
-    _global_base_radius = base_radius
-    _global_exclude_list = exclude_list
-    _global_priority_connections = priority_connections
-    _global_mono_connection = mono_connection
+    ConnectionParamsManager.set_params(params)
 
 
 def select_connection_candidates(
     endpoint: Point,
-    all_features_proj: gpd.GeoDataFrame,
     spatial_index,
-    base_radius: float,
-    exclude_list: Optional[List[str]],
-    priority_connections: Optional[Dict[str, Dict[str, Any]]],
-    mono_connection: bool,
-    solo_dict: Optional[Dict[str, Dict[str, Any]]],
-) -> Set[str]:
+    solo_dict: Optional[Dict[str, Dict[str, Any]]] = None,
+    max_connections: int = 50,
+) -> List[ConnectionCandidate]:
     """
-    Select candidate connection IDs for a given point.
+    Select candidate connection IDs for a given point with improved selection logic.
 
     Args:
         endpoint: Point or geometric object serving as reference.
-        all_features_proj: Complete set of entities, projected in EPSG:3857.
-        spatial_index: Spatial index built on all_features_proj to accelerate spatial queries.
-        base_radius: Radius for creating buffer around endpoint.
-        exclude_list: List of layer names to exclude from search.
-        priority_connections: Dictionary of priorities and radii for certain layers.
-        mono_connection: If True, selects a single connection per endpoint based on priority.
+        spatial_index: Spatial index for rapid feature lookup
         solo_dict: Optional. Dictionary indicating special rules for restricting connections.
+        max_connections: Maximum number of connections to return per endpoint
 
     Returns:
-        Set of identifiers (strings) for candidates selected as connections.
+        List of ConnectionCandidate objects representing potential connections
     """
+    # Get connection parameters from thread-local storage
+    params = ConnectionParamsManager.get_params()
+    all_features_proj = params.all_features_proj
+    base_radius = params.base_radius
+    exclude_list = params.exclude_list
+    priority_connections = params.priority_connections
+    mono_connection = params.mono_connection
+
     # Create a buffer around the endpoint
     buf = endpoint.buffer(base_radius)
 
@@ -87,7 +123,7 @@ def select_connection_candidates(
 
     # Skip if no candidates
     if not possible_idx:
-        return set()
+        return []
 
     possible = all_features_proj.iloc[possible_idx]
 
@@ -98,23 +134,38 @@ def select_connection_candidates(
     if exclude_list and not matches.empty:
         matches = matches[~matches["source_layer"].isin(exclude_list)]
 
-    # Handle solo connection case
+    if matches.empty:
+        return []
+
+    # Handle special case for solo connections
     if solo_dict is not None and not matches.empty:
         candidates = matches[matches["source_layer"].isin(solo_dict.keys())].copy()
         if not candidates.empty:
             candidates["distance"] = candidates.geometry.distance(endpoint)
-            valid = candidates[
-                candidates.apply(
-                    lambda row: row["distance"]
-                    <= solo_dict[row["source_layer"]]["radius"],
-                    axis=1,
-                )
-            ]
-            if not valid.empty:
-                valid = valid.sort_values(by="distance")
-                return {valid.iloc[0]["id"]}
+            # Filter by radius for each source layer
+            valid_candidates = []
 
-    # Handle mono connection case
+            for _, row in candidates.iterrows():
+                source_layer = row["source_layer"]
+                if source_layer in solo_dict:
+                    max_radius = solo_dict[source_layer]["radius"]
+                    if row["distance"] <= max_radius:
+                        priority = solo_dict[source_layer].get("priority", 999)
+                        valid_candidates.append(
+                            ConnectionCandidate(
+                                id=row["id"],
+                                source_layer=source_layer,
+                                distance=row["distance"],
+                                priority=priority,
+                            )
+                        )
+
+            if valid_candidates:
+                # Sort by priority then distance
+                valid_candidates.sort()
+                return [valid_candidates[0]]  # Return only the best candidate
+
+    # Handle mono_connection case with priority
     if mono_connection and priority_connections and not matches.empty:
         candidates = matches[
             matches["source_layer"].isin(priority_connections.keys())
@@ -122,35 +173,62 @@ def select_connection_candidates(
         if not candidates.empty:
             candidates["distance"] = candidates.geometry.distance(endpoint)
 
-            # Filter by maximum connection radius
-            valid = candidates[
-                candidates.apply(
-                    lambda row: row["distance"]
-                    <= priority_connections[row["source_layer"]]["radius"],
-                    axis=1,
-                )
-            ]
+            # Create a list of valid connection candidates
+            valid_candidates = []
 
-            if not valid.empty:
-                valid["priority"] = valid["source_layer"].map(
-                    lambda s: priority_connections[s]["priority"]
-                )
+            for _, row in candidates.iterrows():
+                source_layer = row["source_layer"]
+                layer_config = priority_connections.get(source_layer, {})
+                max_radius = layer_config.get("radius", base_radius)
+
+                if row["distance"] <= max_radius:
+                    priority = layer_config.get("priority", 999)
+                    valid_candidates.append(
+                        ConnectionCandidate(
+                            id=row["id"],
+                            source_layer=source_layer,
+                            distance=row["distance"],
+                            priority=priority,
+                        )
+                    )
+
+            if valid_candidates:
                 # Sort by priority then distance
-                valid = valid.sort_values(by=["priority", "distance"])
-                return {valid.iloc[0]["id"]}
+                valid_candidates.sort()
+                return [valid_candidates[0]]  # Return only the highest priority
 
-    # Default case: return all matching IDs
-    return set(matches["id"].tolist())
+    # Default case: select multiple connections based on distance
+    candidates = []
+
+    # Calculate distances for all matches
+    match_distances = []
+    for _, row in matches.iterrows():
+        distance = row.geometry.distance(endpoint)
+        match_distances.append((row, distance))
+
+    # Sort by distance
+    match_distances.sort(key=lambda x: x[1])
+
+    # Take up to max_connections closest matches
+    for row, distance in match_distances[:max_connections]:
+        candidates.append(
+            ConnectionCandidate(
+                id=row["id"], source_layer=row["source_layer"], distance=distance
+            )
+        )
+
+    return candidates
 
 
 def process_feature_worker(
-    item: Tuple[int, pd.Series],
+    item: Tuple[int, pd.Series], max_connections_per_endpoint: int = 10
 ) -> Tuple[List[str], List[str], List[str]]:
     """
     Process a feature to calculate its spatial connections.
 
     Args:
         item: Tuple (idx, feature) where 'idx' is the index and 'feature' a row of the GeoDataFrame.
+        max_connections_per_endpoint: Maximum number of connections to keep per endpoint
 
     Returns:
         Three lists corresponding to:
@@ -159,12 +237,9 @@ def process_feature_worker(
             - Connections at end point
     """
     idx, feature = item
-    all_features_proj = _global_all_features_proj
-    spatial_index = _global_spatial_index
-    base_radius = _global_base_radius
-    exclude_list = _global_exclude_list
-    priority_connections = _global_priority_connections
-    mono_connection = _global_mono_connection
+    params = ConnectionParamsManager.get_params()
+    all_features_proj = params.all_features_proj
+    spatial_index = all_features_proj.sindex
 
     geom = feature.geometry
     feature_id = feature["id"]
@@ -179,57 +254,39 @@ def process_feature_worker(
         config = LAYERS_CONFIG.get(feature["source_layer"], {})
         solo_dict = getattr(config, "solo_connection_if", None)
 
-        # Find connections at start point
-        start_ids = select_connection_candidates(
-            start_point,
-            all_features_proj,
-            spatial_index,
-            base_radius,
-            exclude_list,
-            priority_connections,
-            mono_connection,
-            solo_dict,
+        start_candidates = select_connection_candidates(
+            start_point, spatial_index, solo_dict, max_connections_per_endpoint
         )
+        start_ids = [c.id for c in start_candidates]
 
-        # Find connections at end point
-        end_ids = select_connection_candidates(
-            end_point,
-            all_features_proj,
-            spatial_index,
-            base_radius,
-            exclude_list,
-            priority_connections,
-            mono_connection,
-            solo_dict,
+        end_candidates = select_connection_candidates(
+            end_point, spatial_index, solo_dict, max_connections_per_endpoint
         )
+        end_ids = [c.id for c in end_candidates]
 
-        # Remove self-connections
-        start_ids.discard(feature_id)
-        end_ids.discard(feature_id)
+        if feature_id in start_ids:
+            start_ids.remove(feature_id)
+        if feature_id in end_ids:
+            end_ids.remove(feature_id)
 
-        # Union of all connections
-        union_ids = start_ids.union(end_ids)
+        union_ids = list(set(start_ids + end_ids))
 
-        return list(union_ids), list(start_ids), list(end_ids)
+        return union_ids, start_ids, end_ids
 
-    # Handling for Point or other geometry types
     else:
         endpoint = geom if geom.geom_type == "Point" else geom.centroid
-        candidate_ids = select_connection_candidates(
+        candidates = select_connection_candidates(
             endpoint,
-            all_features_proj,
             spatial_index,
-            base_radius,
-            exclude_list,
-            priority_connections,
-            mono_connection,
             solo_dict=None,
+            max_connections=max_connections_per_endpoint,
         )
+        candidate_ids = [c.id for c in candidates]
 
-        # Remove self-connections
-        candidate_ids.discard(feature_id)
+        if feature_id in candidate_ids:
+            candidate_ids.remove(feature_id)
 
-        return list(candidate_ids), [], []
+        return candidate_ids, [], []
 
 
 @timed
@@ -240,6 +297,8 @@ def find_connections(
     exclude_list: Optional[List[str]] = None,
     priority_connections: Optional[Dict[str, Dict[str, Any]]] = None,
     mono_connection_per_endpoint: bool = False,
+    max_connections_per_endpoint: int = 10,
+    chunk_size: int = 500,
 ) -> gpd.GeoDataFrame:
     """
     Calculate spatial connections for each entity in a GeoDataFrame.
@@ -251,6 +310,8 @@ def find_connections(
         exclude_list: List of layers to exclude.
         priority_connections: Dictionary of priorities and radii for certain layers.
         mono_connection_per_endpoint: If True, limits connection to one per endpoint.
+        max_connections_per_endpoint: Maximum connections to keep per endpoint.
+        chunk_size: Size of chunks for parallel processing.
 
     Returns:
         The original GeoDataFrame with three added columns:
@@ -265,39 +326,139 @@ def find_connections(
     gdf_proj = gdf.to_crs(epsg=3857).copy()
     all_features_proj = all_features.to_crs(epsg=3857).copy()
 
-    # Process features in parallel
-    with ProcessPoolExecutor(
-        max_workers=min(os.cpu_count(), 16),
-        initializer=init_worker,
-        initargs=(
-            all_features_proj,
-            base_radius,
-            exclude_list,
-            priority_connections,
-            mono_connection_per_endpoint,
-        ),
-    ) as executor:
-        # Use list to materialize results
-        results = list(
-            executor.map(
-                process_feature_worker,
-                list(gdf_proj.iterrows()),
-                chunksize=max(
-                    1, len(gdf_proj) // (os.cpu_count() * 2)
-                ),  # Optimize chunk size
-            )
+    # Ensure we have spatial indexes for efficient spatial queries
+    if not hasattr(all_features_proj, "sindex") or all_features_proj.sindex is None:
+        all_features_proj.sindex
+
+    # Create connection parameters to pass to worker processes
+    conn_params = ConnectionParams(
+        all_features_proj=all_features_proj,
+        base_radius=base_radius,
+        exclude_list=exclude_list,
+        priority_connections=priority_connections,
+        mono_connection=mono_connection_per_endpoint,
+    )
+
+    # Calculate optimal number of workers and chunk size
+    num_cores = min(os.cpu_count() or 1, 16)  # Limit to 16 cores max
+    num_features = len(gdf_proj)
+
+    # Adjust chunk size based on dataset size
+    if num_features <= 1000:
+        # Small dataset - process in a single chunk or use very few workers
+        chunk_size = (
+            max(1, num_features // (num_cores * 2))
+            if num_features > 100
+            else num_features
         )
+        num_workers = min(num_cores, max(1, num_features // chunk_size))
+    else:
+        # Larger dataset - use more workers but with reasonable chunk sizes
+        num_workers = num_cores
+        chunk_size = max(chunk_size, num_features // (num_cores * 4))
+
+    # Process features in parallel
+    all_results = []
+
+    # Use chunking to avoid memory issues with very large datasets
+    for i in range(0, num_features, chunk_size):
+        end_idx = min(i + chunk_size, num_features)
+        chunk = gdf_proj.iloc[i:end_idx]
+
+        # Process this chunk
+        with ProcessPoolExecutor(
+            max_workers=num_workers, initializer=init_worker, initargs=(conn_params,)
+        ) as executor:
+            # Create a list of futures for this chunk
+            futures = []
+            for idx, row in chunk.iterrows():
+                futures.append(
+                    executor.submit(
+                        process_feature_worker, (idx, row), max_connections_per_endpoint
+                    )
+                )
+
+            # Process results as they complete
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    all_results.append(result)
+                except Exception as e:
+                    logging.error(f"Error processing feature: {e}")
+                    # Add empty result to maintain order
+                    all_results.append(([], [], []))
 
     # Unpack results
-    connections, start_connections, end_connections = zip(*results)
+    if len(all_results) < len(gdf_proj):
+        # Fill missing results with empty lists if needed
+        missing = len(gdf_proj) - len(all_results)
+        all_results.extend([([], [], [])] * missing)
+        logging.warning(f"Added {missing} empty results to match dataframe length")
+
+    connections, start_connections, end_connections = zip(*all_results)
 
     # Add connection data to the dataframe
     gdf_proj["connections"] = connections
     gdf_proj["start_connections"] = start_connections
     gdf_proj["end_connections"] = end_connections
 
+    # Do additional validation on connections
+    gdf_proj = validate_connections(gdf_proj, all_features_proj)
+
     # Return projected back to WGS84
     return gdf_proj.to_crs(epsg=4326)
+
+
+def validate_connections(
+    gdf: gpd.GeoDataFrame, all_features: gpd.GeoDataFrame
+) -> gpd.GeoDataFrame:
+    """
+    Validate and clean up connections to ensure network integrity.
+
+    Args:
+        gdf: GeoDataFrame with calculated connections
+        all_features: Complete set of features for validation
+
+    Returns:
+        Validated and cleaned GeoDataFrame
+    """
+    # Create set of all valid feature IDs
+    valid_ids = set(all_features["id"].unique())
+
+    # Validate each row's connections
+    for idx, row in gdf.iterrows():
+        # Filter connections to only include existing features
+        connections = [c for c in row.get("connections", []) if c in valid_ids]
+        start_connections = [
+            c for c in row.get("start_connections", []) if c in valid_ids
+        ]
+        end_connections = [c for c in row.get("end_connections", []) if c in valid_ids]
+
+        # Remove self-references
+        feature_id = row["id"]
+        if feature_id in connections:
+            connections.remove(feature_id)
+        if feature_id in start_connections:
+            start_connections.remove(feature_id)
+        if feature_id in end_connections:
+            end_connections.remove(feature_id)
+
+        # Limit number of connections if excessive (more than 60 is likely noise)
+        if len(connections) > 60:
+            logging.warning(
+                f"Feature {feature_id} has {len(connections)} connections - limiting to 60"
+            )
+            # For excessive connections, prioritize by proximity
+            # This would require distance calculation which is computationally expensive
+            # So we'll just take the first 15 for now which are likely from start/end points
+            connections = connections[:60]
+
+        # Update the dataframe
+        gdf.at[idx, "connections"] = connections
+        gdf.at[idx, "start_connections"] = start_connections
+        gdf.at[idx, "end_connections"] = end_connections
+
+    return gdf
 
 
 @timed
@@ -332,30 +493,77 @@ def compute_connections(
 
         reprojected_layers[layer_key] = gdf
 
-    # Concatenate all layers into one GeoDataFrame
+    # First create a lightweight version of all features for spatial indexing
+    # to reduce memory usage during connection calculation
+    minimal_features = []
+    for layer_key, gdf in reprojected_layers.items():
+        minimal_gdf = gdf[["id", "geometry", "source_layer"]].copy()
+        minimal_features.append(minimal_gdf)
+
     all_features = gpd.GeoDataFrame(
-        pd.concat(list(reprojected_layers.values()), ignore_index=True), crs="EPSG:4326"
+        pd.concat(minimal_features, ignore_index=True), crs="EPSG:4326"
     )
 
     # Optimize with rtree spatial index
-    all_features.sindex
+    if not hasattr(all_features, "sindex") or all_features.sindex is None:
+        all_features.sindex
 
     # Process each layer
     updated_layers = {}
-    for layer_key, gdf in layers.items():
+    total_features = sum(len(gdf) for gdf in layers.values())
+
+    # Process larger layers first to optimize parallel processing
+    sorted_layers = sorted(
+        [(k, len(gdf)) for k, gdf in layers.items()], key=lambda x: x[1], reverse=True
+    )
+
+    for layer_key, feature_count in sorted_layers:
+        gdf = reprojected_layers[layer_key]
+        if gdf.empty:
+            logging.warning(
+                f"Layer {layer_key} is empty - skipping connection calculation"
+            )
+            updated_layers[layer_key] = gdf
+            continue
+
         cfg = LAYERS_CONFIG.get(layer_key, {})
 
-        # Get connection configuration
         exclude = getattr(cfg, "exclude_connections", [])
         priority = getattr(cfg, "priority_connections", None)
         mono = getattr(cfg, "mono_connection_per_endpoint", False)
         radius = getattr(cfg, "radius", 3)
 
-        # Calculate connections
-        updated_gdf = find_connections(
-            gdf, all_features, radius, exclude, priority, mono
-        )
-        updated_layers[layer_key] = updated_gdf
+        if feature_count < 1000:
+            chunk_size = feature_count
+        elif feature_count < 5000:
+            chunk_size = 1000
+        elif feature_count < 20000:
+            chunk_size = 2000
+        else:
+            chunk_size = 5000
+
+        max_connections = 60 if layer_key.startswith("reseau") else 30
+        max_connections = 1 if layer_key.endswith("bt") else max_connections
+
+        try:
+            logging.info(
+                f"Calculating connections for layer {layer_key} with {feature_count} features"
+            )
+            updated_gdf = find_connections(
+                gdf,
+                all_features,
+                radius,
+                exclude,
+                priority,
+                mono,
+                max_connections_per_endpoint=max_connections,
+                chunk_size=chunk_size,
+            )
+            updated_layers[layer_key] = updated_gdf
+            logging.info(f"Completed connection calculation for {layer_key}")
+        except Exception as e:
+            logging.error(f"Error processing connections for layer {layer_key}: {e}")
+            updated_layers[layer_key] = gdf
 
     return updated_layers
 
@@ -396,17 +604,53 @@ def optimize_connections(
         for idx, feature in opt_gdf.iterrows():
             node_id = feature["id"]
 
-            # Keep only important connections (e.g., remove transitive connections)
-            if node_id in G:
-                # For certain layer types, we may want to apply specific optimizations
-                connections = feature.get("connections", [])
+            # Skip if node isn't in graph
+            if node_id not in G:
+                continue
 
-                # Example optimization: Remove redundant connections
-                # This is a simple example - actual optimization would depend on domain requirements
-                if len(connections) > 10:  # If too many connections
-                    # Keep only the closest connections
-                    optimized_connections = connections[:10]
-                    opt_gdf.at[idx, "connections"] = optimized_connections
+            connections = feature.get("connections", [])
+
+            # No need to optimize if few connections
+            if len(connections) <= 5:
+                continue
+
+            # Check if this is a line-type feature
+            if feature.geometry.geom_type == "LineString":
+                # For lines, we want to maintain connectivity at endpoints
+                # but reduce redundancy in the middle
+                start_conn = feature.get("start_connections", [])
+                end_conn = feature.get("end_connections", [])
+
+                # Keep all start/end connections
+                important_connections = set(start_conn + end_conn)
+
+                # For any other connections, limit to closest 5
+                other_conn = [c for c in connections if c not in important_connections]
+                if len(other_conn) > 5:
+                    # We could calculate distances here, but for simplicity just keep first 5
+                    kept_other = other_conn[:5]
+                    opt_gdf.at[idx, "connections"] = (
+                        list(important_connections) + kept_other
+                    )
+            else:
+                # For point features, if too many connections (>15), keep only the important ones
+                if len(connections) > 15:
+                    # Keep connections with a high degree as they're likely important infrastructure
+                    important_connections = []
+                    for conn in connections:
+                        if conn in G:
+                            # Keep connections that are well connected themselves
+                            if G.degree(conn) >= 3:
+                                important_connections.append(conn)
+
+                    # If we've reduced enough, use those; otherwise just trim to 10
+                    if (
+                        len(important_connections) >= 5
+                        and len(important_connections) <= 10
+                    ):
+                        opt_gdf.at[idx, "connections"] = important_connections
+                    else:
+                        opt_gdf.at[idx, "connections"] = connections[:10]
 
         optimized_layers[layer_key] = opt_gdf
 

@@ -133,9 +133,8 @@ def upload_layers_to_bigquery(
     return results
 
 
-@retry(max_attempts=3, exceptions=(GoogleCloudError,))
-@timed
 @retry(max_attempts=3, exceptions=(GoogleCloudError, ValueError, IOError))
+@timed
 def upload_layer_to_bigquery(
     layer_key: str, updated_layers: Dict[str, gpd.GeoDataFrame]
 ) -> Optional[int]:
