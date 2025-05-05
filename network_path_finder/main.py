@@ -9,8 +9,9 @@ from finder import find_closest_path
 from config import MAX_BT_DISTANCE
 
 if __name__ == "__main__":
-    TARGET_LONGITUDE = 2.4300870399100916
-    TARGET_LATITUDE = 48.86767180536444
+
+    TARGET_LONGITUDE = 2.447829364048289
+    TARGET_LATITUDE = 48.861599840010655
 
     logging.info(
         f"Starting network path finder with maximum distance of {MAX_BT_DISTANCE} km"

@@ -9,8 +9,6 @@ from config import (
     DATA_DIR,
     OUTPUT_FILE,
     MAP_OUTPUT_FILE,
-    TARGET_LONGITUDE,
-    TARGET_LATITUDE,
     MAX_BT_DISTANCE,
 )
 from loader import load_geojson_layers, build_network_lookup
@@ -40,8 +38,8 @@ def find_closest_path(
             - path_to_source
             - path_features
     """
-    lon = lon if lon is not None else TARGET_LONGITUDE
-    lat = lat if lat is not None else TARGET_LATITUDE
+    lon = lon
+    lat = lat
     data_dir = data_dir if data_dir is not None else DATA_DIR
     output_file = output_file if output_file is not None else OUTPUT_FILE
     map_file = map_file if map_file is not None else MAP_OUTPUT_FILE
