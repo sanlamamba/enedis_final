@@ -1,5 +1,5 @@
 """
-Main module for the Network Path Finder.
+Enhanced finder module with robust path finding strategies.
 """
 
 import logging
@@ -13,7 +13,7 @@ from config import (
 )
 from loader import load_geojson_layers, build_network_lookup
 from geo import find_closest_bt_elements, extract_path_features
-from pathfinding import find_path_to_source
+from pathfinding import find_path_with_fallbacks  # Using the improved pathfinding
 from visualization import save_results, generate_folium_map
 
 
@@ -21,22 +21,13 @@ def find_closest_path(
     lon=None, lat=None, data_dir=None, output_file=None, map_file=None
 ):
     """
-    Main function to find the closest BT element and trace a path to a source substation.
-    If the closest BT element doesn't have a path, try the next closest one.
+    Enhanced path finding with robust fallback strategies.
 
-    Args:
-        lon (float, optional): Longitude coordinate
-        lat (float, optional): Latitude coordinate
-        data_dir (Path, optional): Directory containing GeoJSON layers
-        output_file (Path, optional): Path to save results JSON
-        map_file (Path, optional): Path to save visualization map
-
-    Returns:
-        dict: Dictionary containing results with keys:
-            - query_point
-            - closest_bt_element
-            - path_to_source
-            - path_features
+    Strategies used:
+    1. Direct path finding
+    2. Relaxed connection search
+    3. Component bridging
+    4. Multiple hop bridging
     """
     lon = lon
     lat = lat
@@ -52,12 +43,20 @@ def find_closest_path(
         logging.error("No layers loaded. Check data directory path.")
         return None
 
-    closest_elements = find_closest_bt_elements(point, layers)
+    # Increase search to get more candidates
+    closest_elements = find_closest_bt_elements(point, layers, max_elements=20)
     if not closest_elements:
         logging.error(f"No BT elements found within {MAX_BT_DISTANCE} km of the point.")
         return None
 
     network_lookup = build_network_lookup(layers)
+
+    # Debug: Log available source substations
+    source_count = 0
+    for node_id, data in network_lookup.items():
+        if data["layer"] == "postes_source":
+            source_count += 1
+    logging.info(f"Found {source_count} source substations in network")
 
     success = False
     result_info = None
@@ -76,27 +75,31 @@ def find_closest_path(
             f"Attempt #{i+1}: Finding path from {feature_id} in layer {layer} at {distance:.2f} km"
         )
 
-        path = find_path_to_source(layer, feature_id, network_lookup)
+        # Use improved path finding with fallbacks
+        path = find_path_with_fallbacks(layer, feature_id, network_lookup, layers)
 
         if path:
+            # Filter out bridge markers for display
+            display_path = [p for p in path if p[0] != "bridge"]
             logging.info(
-                f"Path found! {len(path)} elements in path to source substation."
+                f"Path found! {len(display_path)} elements in path to source substation."
             )
-            for j, (layer_name, id_) in enumerate(path):
+            for j, (layer_name, id_) in enumerate(display_path):
                 logging.info(f"  Path element {j+1}: {layer_name}: {id_}")
 
-            path_features = extract_path_features(path, layers)
+            # Extract features for the real network elements
+            path_features = extract_path_features(display_path, layers)
 
             result_info = {
                 "closest_info": closest_info,
-                "path": path,
+                "path": display_path,
                 "path_features": path_features,
             }
             success = True
             break
         else:
             logging.warning(
-                f"No path found from {feature_id}. Trying next closest BT element..."
+                f"No path found from {feature_id} with all strategies. Trying next closest BT element..."
             )
 
     results = {
