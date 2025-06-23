@@ -1,0 +1,6 @@
+pandas>=2.0.0
+geopandas>=0.14.0
+shapely>=2.0.0
+folium>=0.15.0
+pyvis>=0.3.0
+rtree>=1.0.0
