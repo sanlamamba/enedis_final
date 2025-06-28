@@ -1,15 +1,19 @@
-"""Configuration for Enedis electrical grid processing."""
+"""Simplified configuration for cloud-based electrical grid processing."""
 
+import os
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data" / "faviere"
-OUTPUT_DIR = BASE_DIR / "output"
+# Cloud configuration
+CLOUD_BUCKET_NAME = os.getenv("CLOUD_BUCKET_NAME", "ofr-2kt-valo-enedis")
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "ofr-2kt-valo-reseau-1-lab-prd")
+CLOUD_DATA_PATH = os.getenv("CLOUD_DATA_PATH", "downloaded/full")
 
-OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
+# Target CRS for processing (optimized for France)
+TARGET_CRS = "EPSG:2154"  # RGF93 / Lambert-93
 
+# Connection radii optimized for electrical grid
 CONN_RADIUS_HIGH = 50.0  # meters
 CONN_RADIUS_MEDIUM = 30.0  # meters
 CONN_RADIUS_LOW = 10.0  # meters
@@ -17,19 +21,20 @@ CONN_RADIUS_LOW = 10.0  # meters
 
 @dataclass
 class LayerConfig:
+    """Configuration for each electrical grid layer."""
+
     name: str
     csv_file: str
-    color: str
-    connection_radius: float  # meters
-    priority: int  # 1 = highest priority (source), higher = lower priority
+    connection_radius: float
+    priority: int
     can_connect_to: List[str]
 
 
+# Simplified layer configurations for electrical grid hierarchy
 LAYERS = {
     "postes_source": LayerConfig(
         name="Source Substations",
         csv_file="poste-source.csv",
-        color="red",
         connection_radius=CONN_RADIUS_HIGH,
         priority=1,
         can_connect_to=["reseau_hta", "reseau_souterrain_hta"],
@@ -37,7 +42,6 @@ LAYERS = {
     "postes_electrique": LayerConfig(
         name="Electrical Substations",
         csv_file="poste-electrique.csv",
-        color="green",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=2,
         can_connect_to=[
@@ -50,7 +54,6 @@ LAYERS = {
     "position_geographique": LayerConfig(
         name="Electrical Poles",
         csv_file="position-geographique-des-poteaux-hta-et-bt.csv",
-        color="orange",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=3,
         can_connect_to=["reseau_bt", "reseau_hta"],
@@ -58,39 +61,57 @@ LAYERS = {
     "reseau_hta": LayerConfig(
         name="HTA Network",
         csv_file="reseau-hta.csv",
-        color="darkred",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=4,
-        can_connect_to=["postes_source", "postes_electrique", "reseau_hta"],
+        can_connect_to=[
+            "postes_source",
+            "postes_electrique",
+            "reseau_hta",
+            "reseau_souterrain_hta",
+            "reseau_bt",
+            "reseau_souterrain_bt",
+        ],
     ),
     "reseau_souterrain_hta": LayerConfig(
         name="Underground HTA Network",
         csv_file="reseau-souterrain-hta.csv",
-        color="purple",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=4,
-        can_connect_to=["postes_source", "postes_electrique", "reseau_souterrain_hta"],
+        can_connect_to=[
+            "postes_source",
+            "postes_electrique",
+            "reseau_souterrain_hta",
+            "reseau_hta",
+            "reseau_bt",
+            "reseau_souterrain_bt",
+        ],
     ),
     "reseau_bt": LayerConfig(
         name="BT Network",
         csv_file="reseau-bt.csv",
-        color="blue",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=5,
-        can_connect_to=["postes_electrique", "position_geographique", "reseau_bt"],
+        can_connect_to=[
+            "postes_electrique",
+            "position_geographique",
+            "reseau_bt",
+            "reseau_souterrain_bt",
+            "reseau_souterrain_hta",
+            "reseau_hta",
+        ],
     ),
     "reseau_souterrain_bt": LayerConfig(
         name="Underground BT Network",
         csv_file="reseau-souterrain-bt.csv",
-        color="darkblue",
         connection_radius=CONN_RADIUS_MEDIUM,
         priority=5,
         can_connect_to=[
             "postes_electrique",
             "position_geographique",
             "reseau_souterrain_bt",
+            "reseau_bt",
+            "reseau_souterrain_hta",
+            "reseau_hta",
         ],
     ),
 }
-
-TARGET_CRS = "EPSG:2154"

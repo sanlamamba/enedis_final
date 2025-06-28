@@ -1,6 +1,13 @@
+# Core data processing
 pandas>=2.0.0
 geopandas>=0.14.0
 shapely>=2.0.0
-folium>=0.15.0
-pyvis>=0.3.0
+
+# Spatial indexing
 rtree>=1.0.0
+
+# Google Cloud dependencies
+google-cloud-storage>=2.10.0
+
+# Essential utilities
+psutil>=5.9.0
