@@ -1,14 +1,15 @@
 """Optimized pipeline for electrical grid connection processing."""
 
+import argparse
 import logging
 import time
 import os
 import psutil
 from datetime import datetime
 
-from loader import load_all_layers_from_cloud
-from connections import process_all_connections
-from exporter import save_all_layers_to_cloud, export_statistics_to_cloud
+from loader import load_all_layers
+from connections import process_all_connections, cleanup_individual_files
+from exporter import save_all_layers, export_statistics
 
 # Configure logging
 logging.basicConfig(
@@ -65,8 +66,13 @@ def print_performance_stats(stats):
     print("=" * 60 + "\n")
 
 
-def main():
-    """Run the optimized electrical grid processing pipeline."""
+def main(data_source: str = "local", output_destination: str = "local"):
+    """Run the optimized electrical grid processing pipeline.
+
+    Args:
+        data_source: Either 'local' or 'cloud' to specify data source
+        output_destination: Either 'local' or 'cloud' to specify output destination
+    """
     start_time = time.time()
     start_datetime = datetime.now()
 
@@ -86,10 +92,9 @@ def main():
     try:
         logger.info("🚀 Starting optimized electrical grid processing pipeline")
 
-        # Step 1: Load data from Google Cloud Storage
         step_start = time.time()
-        logger.info("=== Loading electrical grid data from Google Cloud ===")
-        layers = load_all_layers_from_cloud()
+        logger.info(f"=== Loading electrical grid data from {data_source} ===")
+        layers = load_all_layers(source=data_source)
 
         # Track memory usage
         current_memory = get_memory_info()
@@ -132,11 +137,11 @@ def main():
 
         logger.info(f"Generated {total_connections:,} total connections")
 
-        # Step 3: Save results to Google Cloud Storage in 'processed' directory
+        # Step 3: Save results to specified destination
         step_start = time.time()
-        logger.info("=== Saving results to Google Cloud Storage ===")
-        save_all_layers_to_cloud(connected_layers)
-        export_statistics_to_cloud(connected_layers)
+        logger.info(f"=== Saving results to {output_destination} ===")
+        save_all_layers(connected_layers, destination=output_destination)
+        export_statistics(connected_layers, destination=output_destination)
 
         # Track memory usage
         current_memory = get_memory_info()
@@ -161,6 +166,9 @@ def main():
 
         logger.info(f"✅ Pipeline completed successfully in {elapsed:.2f} seconds")
 
+        # Clean up individual files after successful completion
+        logger.info("Cleaning up individual layer files...")
+
         # Print detailed performance statistics
         print_performance_stats(performance_stats)
 
@@ -172,5 +180,23 @@ def main():
 
 
 if __name__ == "__main__":
-    success = main()
+    # parser = argparse.ArgumentParser(
+    #     description="Electrical grid connection processing pipeline"
+    # )
+    # parser.add_argument(
+    #     "--source",
+    #     choices=["local", "cloud"],
+    #     default="local",
+    #     help="Data source: 'local' for local CSV files, 'cloud' for Google Cloud Storage (default: local)",
+    # )
+    # parser.add_argument(
+    #     "--output",
+    #     choices=["local", "cloud"],
+    #     default="local",
+    #     help="Output destination: 'local' for local files, 'cloud' for Google Cloud Storage (default: local)",
+    # )
+
+    # args = parser.parse_args()
+    place = "local"
+    success = main(data_source=place, output_destination=place)
     exit(0 if success else 1)
