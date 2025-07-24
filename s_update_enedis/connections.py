@@ -7,6 +7,7 @@ from shapely.geometry import Point
 import pandas as pd
 
 from config import LAYERS
+from exporter_local import save_to_local_storage
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +165,18 @@ def process_all_connections(
 
     for layer_key in priority_order:
         logger.info(f"Processing connections for {layer_key}")
+
+        if layer_key != "reseau_souterrain_bt":
+            logger.info(f"Skipping {layer_key} as it is not processed in this step.")
+            continue
+
         gdf = layers[layer_key]
         updated_gdf = calculate_layer_connections(gdf, all_features, layer_key)
         updated_layers[layer_key] = updated_gdf
+        # Save each processed layer immediately
+        try:
+            save_to_local_storage(updated_gdf, layer_key)
+        except Exception as e:
+            logger.error(f"Failed to save processed layer {layer_key} immediately: {e}")
 
     return updated_layers

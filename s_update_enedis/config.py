@@ -5,6 +5,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List
 
+LOCAL_OUTPUT_PATH = os.getenv("LOCAL_OUTPUT_PATH", "../output")
+LOCAL_DATA_PATH = os.getenv("LOCAL_DATA_PATH", "../data")
+
 # Cloud configuration
 CLOUD_BUCKET_NAME = os.getenv("CLOUD_BUCKET_NAME", "ofr-2kt-valo-enedis")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "ofr-2kt-valo-reseau-1-lab-prd")

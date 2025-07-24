@@ -7,12 +7,20 @@ import psutil
 from datetime import datetime
 
 from loader import load_all_layers_from_cloud
+from loader_local import load_all_layers_from_local
 from connections import process_all_connections
 from exporter import save_all_layers_to_cloud, export_statistics_to_cloud
+from exporter_local import save_all_layers_to_local, export_statistics_to_local
 
 # Configure logging
+log_file_path = os.path.join(os.path.dirname(__file__), "pipeline.log")
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(log_file_path, mode="a", encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -89,7 +97,7 @@ def main():
         # Step 1: Load data from Google Cloud Storage
         step_start = time.time()
         logger.info("=== Loading electrical grid data from Google Cloud ===")
-        layers = load_all_layers_from_cloud()
+        layers = load_all_layers_from_local()
 
         # Track memory usage
         current_memory = get_memory_info()
@@ -135,8 +143,8 @@ def main():
         # Step 3: Save results to Google Cloud Storage in 'processed' directory
         step_start = time.time()
         logger.info("=== Saving results to Google Cloud Storage ===")
-        save_all_layers_to_cloud(connected_layers)
-        export_statistics_to_cloud(connected_layers)
+        save_all_layers_to_local(connected_layers)
+        export_statistics_to_local(connected_layers)
 
         # Track memory usage
         current_memory = get_memory_info()
