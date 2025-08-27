@@ -76,9 +76,7 @@ class GeoJSONLoader:
             insert_rows(self.bq_client, full_table, batch_with_source)
 
             total_inserted += len(batch)
-            logger.info(
-                f"Progress: {total_inserted}/{len(features)} (inserted to both {table_name} and enedis_full)"
-            )
+            logger.info(f"Progress: {total_inserted}/{len(features)}")
 
         logger.info(f"Completed: {total_inserted} rows inserted to both tables")
 
