@@ -176,3 +176,5 @@ data/*
 */data/*
 output*/*
 */output/*
+
+*_env
