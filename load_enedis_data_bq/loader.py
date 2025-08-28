@@ -90,6 +90,22 @@ class GeoJSONLoader:
         logger.info(f"Processing {len(files)} files")
 
         for blob_name in files:
+            if not blob_name.endswith(".geojson"):
+                continue
+
+            if any(
+                skip_name in blob_name
+                for skip_name in [
+                    "postes_source.geojson",
+                    "position_geographique.geojson",
+                    "postes_electrique.geojson",
+                    "reseau_bt.geojson",
+                    "reseau_hta.geojson",
+                ]
+            ):
+                logger.info(f"Skipping {blob_name}")
+                continue
+
             try:
                 self.load_file(bucket_name, blob_name)
             except Exception as e:
