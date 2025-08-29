@@ -8,15 +8,12 @@ from typing import List
 LOCAL_OUTPUT_PATH = os.getenv("LOCAL_OUTPUT_PATH", "../output")
 LOCAL_DATA_PATH = os.getenv("LOCAL_DATA_PATH", "../data")
 
-# Cloud configuration
 CLOUD_BUCKET_NAME = os.getenv("CLOUD_BUCKET_NAME", "ofr-2kt-valo-enedis")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "ofr-2kt-valo-reseau-1-lab-prd")
 CLOUD_DATA_PATH = os.getenv("CLOUD_DATA_PATH", "downloaded/full")
 
-# Target CRS for processing (optimized for France)
-TARGET_CRS = "EPSG:2154"  # RGF93 / Lambert-93
+TARGET_CRS = "EPSG:2154"
 
-# Connection radii optimized for electrical grid
 CONN_RADIUS_HIGH = 50.0  # meters
 CONN_RADIUS_MEDIUM = 30.0  # meters
 CONN_RADIUS_LOW = 10.0  # meters
@@ -33,7 +30,6 @@ class LayerConfig:
     can_connect_to: List[str]
 
 
-# Simplified layer configurations for electrical grid hierarchy
 LAYERS = {
     "postes_source": LayerConfig(
         name="Source Substations",

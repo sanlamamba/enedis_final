@@ -48,4 +48,5 @@ def get_core_schema() -> List[bigquery.SchemaField]:
         bigquery.SchemaField("latitude", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("source_date", "DATE", mode="NULLABLE"),
         bigquery.SchemaField("load_timestamp", "TIMESTAMP", mode="NULLABLE"),
+        bigquery.SchemaField("source_table", "STRING", mode="NULLABLE"),
     ]

@@ -12,7 +12,6 @@ from connections import process_all_connections
 from exporter import save_all_layers_to_cloud, export_statistics_to_cloud
 from exporter_local import save_all_layers_to_local, export_statistics_to_local
 
-# Configure logging
 log_file_path = os.path.join(os.path.dirname(__file__), "pipeline.log")
 logging.basicConfig(
     level=logging.INFO,

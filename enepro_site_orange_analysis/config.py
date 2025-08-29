@@ -4,7 +4,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     project_id: str = "ofr-2kt-valo-reseau-1-lab-prd"
-    batch_size: int = 100
+    batch_size: int = 20
     max_depth: int = 10
     exploration_limit: int = 50
 
